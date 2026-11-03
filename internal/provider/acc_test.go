@@ -824,3 +824,146 @@ resource "tissue_mast_override" "cover" {
 		},
 	})
 }
+
+// A rotation or policy deleted in the app is planned back in, and so is an
+// override whose rotation went with it.
+func TestAccRotationAndPolicyGoneAreRecreated(t *testing.T) {
+	f := newFakeMast(t)
+	config := providerBlock(f, fullToken) + `
+resource "tissue_mast_rotation" "primary" {
+  name  = "primary"
+  order = ["usr_ana", "usr_ben"]
+}
+
+resource "tissue_mast_override" "holiday" {
+  rotation_id = tissue_mast_rotation.primary.id
+  user_id     = "usr_ben"
+  start       = "2026-12-24"
+  end         = "2026-12-26"
+}
+
+resource "tissue_mast_policy" "default" {
+  name  = "default"
+  steps = [{ target = "oncall", rotation_id = tissue_mast_rotation.primary.id, priority = "page" }]
+}
+`
+	var rotation, policy string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: func(s *terraform.State) error {
+					rotation = s.RootModule().Resources["tissue_mast_rotation.primary"].Primary.ID
+					policy = s.RootModule().Resources["tissue_mast_policy.default"].Primary.ID
+					return nil
+				},
+			},
+			{
+				PreConfig: func() {
+					f.mu.Lock()
+					delete(f.schedules, rotation)
+					delete(f.policies, policy)
+					f.mu.Unlock()
+				},
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrPair("tissue_mast_override.holiday", "rotation_id", "tissue_mast_rotation.primary", "id"),
+					resource.TestCheckResourceAttrPair("tissue_mast_policy.default", "steps.0.rotation_id", "tissue_mast_rotation.primary", "id"),
+					func(s *terraform.State) error {
+						if id := s.RootModule().Resources["tissue_mast_rotation.primary"].Primary.ID; id == rotation {
+							return fmt.Errorf("rotation still %s", id)
+						}
+						if id := s.RootModule().Resources["tissue_mast_policy.default"].Primary.ID; id == policy {
+							return fmt.Errorf("policy still %s", id)
+						}
+						f.mu.Lock()
+						defer f.mu.Unlock()
+						if len(f.schedules) != 1 || len(f.policies) != 1 {
+							return fmt.Errorf("%d rotations and %d policies, want 1 each", len(f.schedules), len(f.policies))
+						}
+						for _, sc := range f.schedules {
+							if len(sc.Overrides) != 1 {
+								return fmt.Errorf("the rotation has %d overrides, want 1", len(sc.Overrides))
+							}
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+func TestAccImportErrors(t *testing.T) {
+	f := newFakeMast(t)
+	config := providerBlock(f, fullToken) + `
+resource "tissue_mast_vital" "backup" {
+  name       = "backup"
+  period_secs = 86400
+}
+
+resource "tissue_mast_channel" "c" { name = "c" }
+
+resource "tissue_mast_rotation" "a" {
+  name  = "twin"
+  order = ["usr_ana"]
+}
+
+resource "tissue_mast_rotation" "b" {
+  name  = "twin"
+  order = ["usr_ben"]
+}
+
+resource "tissue_mast_override" "o" {
+  rotation_id = tissue_mast_rotation.a.id
+  user_id     = "usr_ben"
+  start       = "2026-12-24"
+  end         = "2026-12-26"
+}
+
+resource "tissue_mast_policy" "a" {
+  name  = "twin"
+  steps = [{ target = "everyone", priority = "page" }]
+}
+
+resource "tissue_mast_policy" "b" {
+  name  = "twin"
+  steps = [{ target = "everyone", priority = "page" }]
+}
+`
+	importing := func(addr, id, want string) resource.TestStep {
+		return resource.TestStep{
+			Config:        config,
+			ResourceName:  addr,
+			ImportState:   true,
+			ImportStateId: id,
+			ExpectError:   regexp.MustCompile(want),
+		}
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			importing("tissue_mast_channel.c", "backup", `is a vital\. Import it as\s+tissue_mast_vital`),
+			importing("tissue_mast_channel.c", "nope", `Finding the channel failed`),
+			importing("tissue_mast_rotation.a", "nope", `no rotation named "nope"`),
+			importing("tissue_mast_rotation.a", "twin", `2 rotations are named "twin"`),
+			importing("tissue_mast_policy.a", "twin", `2 policies are named "twin"`),
+			importing("tissue_mast_policy.a", "nope", `0 policies are named "nope"`),
+			importing("tissue_mast_override.o", "ov_123", `Bad import id`),
+			importing("tissue_mast_override.o", "twin/", `Bad import id`),
+			importing("tissue_mast_override.o", "twin/ov_123", `2 rotations are named`),
+			{
+				Config:       config,
+				ResourceName: "tissue_mast_override.o",
+				ImportState:  true,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					return s.RootModule().Resources["tissue_mast_rotation.a"].Primary.ID + "/ov_missing", nil
+				},
+				ExpectError: regexp.MustCompile(`has no override ov_missing`),
+			},
+		},
+	})
+}
