@@ -3,12 +3,12 @@
 page_title: "tissue_mast_channel Data Source - tissue"
 subcategory: ""
 description: |-
-  A channel or vital by name, for wiring one made in the app into other configuration.
+  A channel or heartbeat by name, for wiring one made in the app into other configuration.
 ---
 
 # tissue_mast_channel (Data Source)
 
-A channel or vital by name, for wiring one made in the app into other configuration.
+A channel or heartbeat by name, for wiring one made in the app into other configuration.
 
 ## Example Usage
 
@@ -33,7 +33,8 @@ resource "local_sensitive_file" "mast_url" {
 
 ### Read-Only
 
+- `heartbeat` (Boolean) Whether it is a heartbeat.
 - `id` (String) The channel id.
-- `kind` (String) `channel` or `vital`.
+- `kind` (String) The API's word for what it is: `channel`, or `vital` for a heartbeat.
 - `policy_id` (String) The policy it follows, or empty.
 - `url` (String, Sensitive) The ingest URL, key included.

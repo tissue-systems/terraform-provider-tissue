@@ -208,11 +208,12 @@ type channelDataSource struct{ clientHolder }
 func newChannelDataSource() datasource.DataSource { return &channelDataSource{} }
 
 type channelDataModel struct {
-	Name     types.String `tfsdk:"name"`
-	ID       types.String `tfsdk:"id"`
-	Kind     types.String `tfsdk:"kind"`
-	URL      types.String `tfsdk:"url"`
-	PolicyID types.String `tfsdk:"policy_id"`
+	Name      types.String `tfsdk:"name"`
+	ID        types.String `tfsdk:"id"`
+	Kind      types.String `tfsdk:"kind"`
+	Heartbeat types.Bool   `tfsdk:"heartbeat"`
+	URL       types.String `tfsdk:"url"`
+	PolicyID  types.String `tfsdk:"policy_id"`
 }
 
 func (d *channelDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -221,11 +222,12 @@ func (d *channelDataSource) Metadata(_ context.Context, req datasource.MetadataR
 
 func (d *channelDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "A channel or vital by name, for wiring one made in the app into other configuration.",
+		MarkdownDescription: "A channel or heartbeat by name, for wiring one made in the app into other configuration.",
 		Attributes: map[string]schema.Attribute{
 			"name":      schema.StringAttribute{Required: true, MarkdownDescription: "The channel's name."},
 			"id":        schema.StringAttribute{Computed: true, MarkdownDescription: "The channel id."},
-			"kind":      schema.StringAttribute{Computed: true, MarkdownDescription: "`channel` or `vital`."},
+			"kind":      schema.StringAttribute{Computed: true, MarkdownDescription: "The API's word for what it is: `channel`, or `vital` for a heartbeat."},
+			"heartbeat": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether it is a heartbeat."},
 			"url":       schema.StringAttribute{Computed: true, Sensitive: true, MarkdownDescription: "The ingest URL, key included."},
 			"policy_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The policy it follows, or empty."},
 		},
@@ -254,16 +256,17 @@ func (d *channelDataSource) Read(ctx context.Context, req datasource.ReadRequest
 			return
 		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &channelDataModel{
-			Name:     cfg.Name,
-			ID:       types.StringValue(ch.ID),
-			Kind:     types.StringValue(ch.Kind),
-			URL:      types.StringPointerValue(ch.URL),
-			PolicyID: types.StringValue(policy),
+			Name:      cfg.Name,
+			ID:        types.StringValue(ch.ID),
+			Kind:      types.StringValue(ch.Kind),
+			Heartbeat: types.BoolValue(ch.Kind == "vital"),
+			URL:       types.StringPointerValue(ch.URL),
+			PolicyID:  types.StringValue(policy),
 		})...)
 		return
 	}
 	resp.Diagnostics.AddAttributeError(path.Root("name"), "No such channel",
-		fmt.Sprintf("There is no live channel or vital named %q.", want))
+		fmt.Sprintf("There is no live channel or heartbeat named %q.", want))
 }
 
 var (

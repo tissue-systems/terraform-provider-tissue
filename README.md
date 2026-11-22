@@ -1,7 +1,7 @@
 # Terraform provider for Tissue
 
 Manages [Tissue Mast](https://tissue.systems/mast/) from Terraform or OpenTofu: channels,
-vitals, on-call rotations and their overrides, and escalation policies. The docs that go on
+heartbeats, on-call rotations and their overrides, and escalation policies. The docs that go on
 the registry are in [docs/](docs/), generated from the schema and [examples/](examples/).
 
 ```hcl
@@ -22,6 +22,11 @@ resource "tissue_mast_channel" "deploys" {
 
 The token comes from the dashboard's API tokens page and needs `mast:read` and `mast:write`.
 `TISSUE_SERVER` points the provider somewhere other than `https://api.tissue.systems`.
+
+`tissue_mast_vital` and its `vital_priority` argument are the deprecated names of
+`tissue_mast_heartbeat` and `heartbeat_priority`. Both still work, and
+[docs/resources/mast_vital.md](docs/resources/mast_vital.md) has the `moved` block that carries
+state from one to the other.
 
 ## Developing
 
