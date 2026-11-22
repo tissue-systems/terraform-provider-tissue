@@ -1,7 +1,7 @@
 # Terraform provider for Tissue
 
 Manages [Tissue Mast](https://tissue.systems/mast/) from Terraform or OpenTofu: channels,
-heartbeats, on-call rotations and their overrides, and escalation policies. The docs that go on
+heartbeats, probes, on-call rotations and their overrides, and escalation policies. The docs that go on
 the registry are in [docs/](docs/), generated from the schema and [examples/](examples/).
 
 ```hcl

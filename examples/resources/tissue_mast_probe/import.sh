@@ -1,0 +1,2 @@
+terraform import tissue_mast_probe.shop shop
+terraform import tissue_mast_probe.shop pr_5d1c0e7a9b3f4c26

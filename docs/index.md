@@ -1,13 +1,13 @@
 ---
 page_title: "Provider: Tissue"
 description: |-
-  Manage Tissue Mast channels, heartbeats, rotations, overrides and escalation policies.
+  Manage Tissue Mast channels, heartbeats, probes, rotations, overrides and escalation policies.
 ---
 
 # Tissue Provider
 
-The Tissue provider manages [Tissue Mast](https://tissue.systems/mast/): the channels and heartbeats
-that page your team's phones, the rotations that decide who is on call, and the escalation
+The Tissue provider manages [Tissue Mast](https://tissue.systems/mast/): the channels, heartbeats and
+probes that page your team's phones, the rotations that decide who is on call, and the escalation
 policies that decide who gets paged next.
 
 Authenticate with an API token from the dashboard's API tokens page at
