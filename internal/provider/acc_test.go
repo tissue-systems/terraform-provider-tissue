@@ -1093,3 +1093,513 @@ resource "tissue_mast_policy" "b" {
 		},
 	})
 }
+
+func TestAccProbe(t *testing.T) {
+	f := newFakeMast(t)
+	const addr = "tissue_mast_probe.shop"
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "shop" {
+  target = "https://shop.acme.test/health"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestMatchResourceAttr(addr, "id", regexp.MustCompile(`^pr_`)),
+					resource.TestCheckResourceAttr(addr, "name", "shop.acme.test"),
+					resource.TestCheckResourceAttr(addr, "kind", "http"),
+					resource.TestCheckResourceAttr(addr, "method", "GET"),
+					resource.TestCheckResourceAttr(addr, "interval_secs", "300"),
+					resource.TestCheckResourceAttr(addr, "expect", "up"),
+					resource.TestCheckResourceAttr(addr, "ignore_case", "false"),
+					resource.TestCheckResourceAttr(addr, "paused", "false"),
+					resource.TestCheckResourceAttr(addr, "domain_expiry", "true"),
+					resource.TestCheckNoResourceAttr(addr, "expect_status"),
+					resource.TestCheckNoResourceAttr(addr, "request_content_type"),
+					resource.TestCheckNoResourceAttr(addr, "auth"),
+				),
+			},
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "shop" {
+  target = "https://shop.acme.test/health"
+}
+`,
+				ConfigPlanChecks: noChange(addr),
+			},
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_channel" "ops" {
+  name = "ops"
+}
+
+resource "tissue_mast_policy" "default" {
+  name  = "default"
+  steps = [{ target = "everyone", priority = "page" }]
+}
+
+resource "tissue_mast_probe" "shop" {
+  name            = "shop checkout"
+  target          = "https://shop.acme.test/api/cart"
+  method          = "POST"
+  interval_secs   = 60
+  expect_statuses = "200,201"
+  expect_header   = "Content-Type: json"
+  json_path       = "status"
+  expect_value    = "ok"
+  body_contains   = "ok"
+  ignore_case     = true
+  request_headers = ["Accept: application/json", "X-Probe: mast"]
+  request_body    = "{\"sku\":\"test\"}"
+  max_ms          = 2000
+  host            = "web1"
+  channel_id      = tissue_mast_channel.ops.id
+  policy_id       = tissue_mast_policy.default.id
+  domain_expiry   = false
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "name", "shop checkout"),
+					resource.TestCheckResourceAttr(addr, "method", "POST"),
+					resource.TestCheckResourceAttr(addr, "interval_secs", "60"),
+					resource.TestCheckResourceAttr(addr, "request_headers.#", "2"),
+					resource.TestCheckResourceAttr(addr, "request_content_type", "application/json"),
+					resource.TestCheckResourceAttr(addr, "max_ms", "2000"),
+					resource.TestCheckResourceAttr(addr, "domain_expiry", "false"),
+					resource.TestCheckResourceAttrPair(addr, "channel_id", "tissue_mast_channel.ops", "id"),
+					resource.TestCheckResourceAttrPair(addr, "policy_id", "tissue_mast_policy.default", "id"),
+				),
+			},
+			{ResourceName: addr, ImportState: true, ImportStateIdFunc: stateID(addr), ImportStateVerify: true},
+			{ResourceName: addr, ImportState: true, ImportStateId: "shop checkout", ImportStateVerify: true},
+			// Taking the conditions out of the configuration takes them off
+			// the probe; the name and the interval stay as they are.
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "shop" {
+  target = "https://shop.acme.test/api/cart"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "name", "shop checkout"),
+					resource.TestCheckResourceAttr(addr, "interval_secs", "60"),
+					resource.TestCheckResourceAttr(addr, "method", "GET"),
+					resource.TestCheckResourceAttr(addr, "ignore_case", "false"),
+					resource.TestCheckResourceAttr(addr, "domain_expiry", "false"),
+					resource.TestCheckNoResourceAttr(addr, "expect_statuses"),
+					resource.TestCheckNoResourceAttr(addr, "json_path"),
+					resource.TestCheckNoResourceAttr(addr, "body_contains"),
+					resource.TestCheckNoResourceAttr(addr, "request_headers.#"),
+					resource.TestCheckNoResourceAttr(addr, "request_body"),
+					resource.TestCheckNoResourceAttr(addr, "request_content_type"),
+					resource.TestCheckNoResourceAttr(addr, "max_ms"),
+					resource.TestCheckNoResourceAttr(addr, "host"),
+					resource.TestCheckNoResourceAttr(addr, "channel_id"),
+					resource.TestCheckNoResourceAttr(addr, "policy_id"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccProbeKinds(t *testing.T) {
+	f := newFakeMast(t)
+	config := providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "dns" {
+  kind       = "dns"
+  target     = "acme.test"
+  method     = "MX"
+  expect_set = "mx1.acme.test,mx2.acme.test"
+  resolver   = "9.9.9.9"
+}
+
+resource "tissue_mast_probe" "redis" {
+  kind          = "tcp"
+  target        = "cache.acme.test:6379"
+  send          = "PING\\r\\n"
+  body_contains = "PONG"
+}
+
+resource "tissue_mast_probe" "cert" {
+  kind   = "tls"
+  target = "acme.test:443"
+}
+
+resource "tissue_mast_probe" "mail" {
+  kind   = "smtp"
+  target = "mx1.acme.test:25"
+  method = "STARTTLS"
+}
+
+resource "tissue_mast_probe" "router" {
+  kind   = "icmp"
+  target = "192.0.2.10"
+}
+
+# The admin port has to stay closed to the outside.
+resource "tissue_mast_probe" "admin" {
+  kind   = "tcp"
+  target = "db.acme.test:5432"
+  expect = "down"
+  paused = true
+}
+`
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("tissue_mast_probe.dns", "method", "MX"),
+					resource.TestCheckResourceAttr("tissue_mast_probe.redis", "method", ""),
+					resource.TestCheckResourceAttr("tissue_mast_probe.redis", "send", `PING\r\n`),
+					resource.TestCheckResourceAttr("tissue_mast_probe.cert", "method", ""),
+					resource.TestCheckResourceAttr("tissue_mast_probe.mail", "method", "STARTTLS"),
+					resource.TestCheckResourceAttr("tissue_mast_probe.router", "domain_expiry", "false"),
+					resource.TestCheckResourceAttr("tissue_mast_probe.admin", "expect", "down"),
+					resource.TestCheckResourceAttr("tissue_mast_probe.admin", "paused", "true"),
+				),
+			},
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectEmptyPlan(),
+				}},
+			},
+			// A dns probe without a record type asks for A.
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "dns" {
+  kind   = "dns"
+  target = "acme.test"
+}
+`,
+				Check: resource.TestCheckResourceAttr("tissue_mast_probe.dns", "method", "A"),
+			},
+			// Another kind is another probe.
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "dns" {
+  kind   = "icmp"
+  target = "acme.test"
+}
+`,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("tissue_mast_probe.dns", plancheck.ResourceActionReplace),
+				}},
+			},
+		},
+	})
+}
+
+func TestAccProbeAuth(t *testing.T) {
+	f := newFakeMast(t)
+	const addr = "tissue_mast_probe.api"
+	config := func(target, auth string) string {
+		return providerBlock(f, fullToken) + fmt.Sprintf(`
+resource "tissue_mast_probe" "api" {
+  target = %q
+  %s
+}
+`, target, auth)
+	}
+	secret := func(want string) resource.TestCheckFunc {
+		return func(s *terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			pr := f.probes[s.RootModule().Resources[addr].Primary.ID]
+			if pr.AuthSecret != want {
+				return fmt.Errorf("the probe holds the secret %q, want %q", pr.AuthSecret, want)
+			}
+			return nil
+		}
+	}
+	basic := `auth = { type = "basic", username = "probe", password = "hunter2" }`
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: config("https://api.acme.test/private", basic),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "auth.type", "basic"),
+					resource.TestCheckResourceAttr(addr, "auth.username", "probe"),
+					resource.TestCheckResourceAttr(addr, "auth.password", "hunter2"),
+					secret("hunter2"),
+				),
+			},
+			{Config: config("https://api.acme.test/private", basic), ConfigPlanChecks: noChange(addr)},
+			{
+				ResourceName: addr, ImportState: true, ImportStateIdFunc: stateID(addr), ImportStateVerify: true,
+				ImportStateVerifyIgnore: []string{"auth.password"},
+			},
+			// The server keeps credentials off a host they weren't given for,
+			// so a new target sends them again.
+			{
+				Config: config("https://api2.acme.test/private", basic),
+				Check:  secret("hunter2"),
+			},
+			{
+				Config: config("https://api2.acme.test/private", `auth = { type = "bearer", token = "tok-1" }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "auth.type", "bearer"),
+					resource.TestCheckNoResourceAttr(addr, "auth.username"),
+					secret("tok-1"),
+				),
+			},
+			{
+				Config: config("https://api2.acme.test/private", ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(addr, "auth.type"),
+					secret(""),
+				),
+			},
+		},
+	})
+}
+
+func TestAccProbeDuplicate(t *testing.T) {
+	f := newFakeMast(t)
+	var first string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "first" {
+  target = "https://shop.acme.test/health"
+}
+
+resource "tissue_mast_probe" "other" {
+  target = "https://shop.acme.test/status"
+}
+`,
+				Check: func(s *terraform.State) error {
+					first = s.RootModule().Resources["tissue_mast_probe.first"].Primary.ID
+					return nil
+				},
+			},
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "first" {
+  target = "https://shop.acme.test/health"
+}
+
+resource "tissue_mast_probe" "other" {
+  target = "https://shop.acme.test/status"
+}
+
+resource "tissue_mast_probe" "second" {
+  name   = "the same check under another name"
+  target = "https://shop.acme.test/health"
+}
+`,
+				ExpectError: regexp.MustCompile(`(?s)A probe already checks this.*terraform import tissue_mast_probe\.<name> pr_[0-9a-f]+`),
+			},
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "first" {
+  target = "https://shop.acme.test/health"
+}
+
+resource "tissue_mast_probe" "other" {
+  target = "https://shop.acme.test/health"
+}
+`,
+				ExpectError: regexp.MustCompile(`(?s)A probe already checks this.*exactly\s+what\s+pr_[0-9a-f]+\s+checks`),
+			},
+			// The probe the refusal names is the one to import.
+			{
+				Config: providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "first" {
+  target = "https://shop.acme.test/health"
+}
+`,
+				Check: func(s *terraform.State) error {
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					if _, ok := f.probes[first]; !ok || len(f.probes) != 1 {
+						return fmt.Errorf("want only %s left, have %d probes", first, len(f.probes))
+					}
+					return nil
+				},
+			},
+		},
+	})
+}
+
+func TestAccProbeRules(t *testing.T) {
+	f := newFakeMast(t)
+	probe := func(body string) string {
+		return providerBlock(f, fullToken) + "\nresource \"tissue_mast_probe\" \"p\" {\n" + body + "\n}\n"
+	}
+	cases := []struct{ body, want string }{
+		{`kind = "tcp"
+  target = "db.acme.test:5432"
+  expect_status = 200`, `expect_status applies to http probes, and this one is tcp`},
+		{`target = "https://acme.test"
+  resolver = "9.9.9.9"`, `resolver applies to dns probes, and this one is http`},
+		{`kind = "icmp"
+  target = "acme.test"
+  method = "GET"`, `method applies to http, dns, smtp probes`},
+		{`target = "https://acme.test"
+  method = "get"`, `one of GET, HEAD, POST, PUT, PATCH, in capitals`},
+		{`kind = "dns"
+  target = "acme.test"
+  method = "SRV"`, `one of A, AAAA, CNAME, MX, TXT, NS`},
+		{`target = "https://acme.test"
+  request_body = "{}"`, `Set method to POST, PUT or PATCH`},
+		{`target = "https://acme.test"
+  request_content_type = "text/plain"`, `request_content_type needs request_body`},
+		{`target = "https://acme.test"
+  expect_value = "ok"`, `expect_value needs json_path`},
+		{`target = "https://acme.test"
+  method = "HEAD"
+  body_contains = "ok"`, `A HEAD request has no body to check`},
+		{`target = "https://acme.test"
+  request_headers = ["Accept:application/json"]`, `stored as "Accept: application/json"`},
+		{`target = "https://acme.test"
+  request_headers = ["no colon here"]`, `is not a "Name: value" line`},
+		{`target = "https://acme.test"
+  auth = { type = "basic", username = "probe" }`, `Basic auth needs username and password`},
+		{`target = "https://acme.test"
+  auth = { type = "bearer", token = "t", username = "probe" }`, `Not used by bearer auth`},
+		{`target = " https://acme.test"`, `target`},
+		{`target = "https://acme.test"
+  interval_secs = 10`, `interval_secs`},
+		{`target = "https://acme.test"
+  policy_id = "default"`, `must be a policy id, po_`},
+	}
+	var steps []resource.TestStep
+	for _, c := range cases {
+		steps = append(steps, resource.TestStep{
+			Config:      probe(c.body),
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(strings.ReplaceAll(regexp.QuoteMeta(c.want), " ", `\s+`)),
+		})
+	}
+	resource.UnitTest(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: steps})
+
+	if n := f.count("POST /v1/mast/probes"); n != 0 {
+		t.Errorf("%d probes were made from configurations that should not pass", n)
+	}
+}
+
+func TestAccProbeGoneIsRecreated(t *testing.T) {
+	f := newFakeMast(t)
+	config := providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "shop" {
+  target = "https://shop.acme.test/health"
+}
+`
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: func(s *terraform.State) error {
+					id = s.RootModule().Resources["tissue_mast_probe.shop"].Primary.ID
+					return nil
+				},
+			},
+			{
+				PreConfig: func() {
+					f.mu.Lock()
+					delete(f.probes, id)
+					f.mu.Unlock()
+				},
+				Config: config,
+				Check: func(s *terraform.State) error {
+					if got := s.RootModule().Resources["tissue_mast_probe.shop"].Primary.ID; got == id {
+						return fmt.Errorf("the probe kept the id of the one that was deleted")
+					}
+					return nil
+				},
+			},
+		},
+	})
+}
+
+func TestAccProbeChangedInTheApp(t *testing.T) {
+	f := newFakeMast(t)
+	const addr = "tissue_mast_probe.shop"
+	config := providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "shop" {
+  target        = "https://shop.acme.test/health"
+  expect_status = 200
+}
+`
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			// Pausing and the interval are left to the app; a condition
+			// added there is not in the configuration, so it goes.
+			{
+				PreConfig: func() {
+					f.mu.Lock()
+					for _, pr := range f.probes {
+						pr.Paused, pr.IntervalSecs = true, 60
+						pr.Text["body_contains"] = "ok"
+					}
+					f.mu.Unlock()
+				},
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "paused", "true"),
+					resource.TestCheckResourceAttr(addr, "interval_secs", "60"),
+					resource.TestCheckNoResourceAttr(addr, "body_contains"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccProbeDataSource(t *testing.T) {
+	f := newFakeMast(t)
+	config := providerBlock(f, fullToken) + `
+resource "tissue_mast_probe" "shop" {
+  name   = "shop"
+  target = "https://shop.acme.test/health"
+  host   = "web1"
+}
+
+data "tissue_mast_probe" "by_name" {
+  name = tissue_mast_probe.shop.name
+}
+
+data "tissue_mast_probe" "by_id" {
+  id = tissue_mast_probe.shop.id
+}
+`
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrPair("data.tissue_mast_probe.by_name", "id", "tissue_mast_probe.shop", "id"),
+					resource.TestCheckResourceAttr("data.tissue_mast_probe.by_name", "target", "https://shop.acme.test/health"),
+					resource.TestCheckResourceAttr("data.tissue_mast_probe.by_name", "state", "pending"),
+					resource.TestCheckResourceAttr("data.tissue_mast_probe.by_id", "name", "shop"),
+					resource.TestCheckResourceAttr("data.tissue_mast_probe.by_id", "host", "web1"),
+					resource.TestCheckNoResourceAttr("data.tissue_mast_probe.by_id", "channel_id"),
+				),
+			},
+			{
+				Config: providerBlock(f, fullToken) + `
+data "tissue_mast_probe" "missing" {
+  name = "nothing by this name"
+}
+`,
+				ExpectError: regexp.MustCompile(`no probe named "nothing by this name"`),
+			},
+		},
+	})
+}

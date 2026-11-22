@@ -86,6 +86,8 @@ type APIError struct {
 	Status  int
 	Code    string
 	Message string
+	// The probe already checking the same thing, on a duplicate_probe refusal.
+	ExistingID string
 }
 
 func (e *APIError) Error() string {
@@ -163,13 +165,15 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		apiErr := &APIError{Method: method, Path: path, Status: resp.StatusCode}
 		var envelope struct {
 			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
+				Code       string `json:"code"`
+				Message    string `json:"message"`
+				ExistingID string `json:"existing_id"`
 			} `json:"error"`
 		}
 		if json.Unmarshal(data, &envelope) == nil {
 			apiErr.Code = envelope.Error.Code
 			apiErr.Message = envelope.Error.Message
+			apiErr.ExistingID = envelope.Error.ExistingID
 		}
 		if apiErr.Message == "" {
 			apiErr.Message = strings.TrimSpace(string(data))
@@ -438,4 +442,103 @@ func (c *Client) People(ctx context.Context) ([]apiPerson, error) {
 	}
 	err := c.do(ctx, http.MethodGet, "/v1/mast/responders", nil, &list)
 	return list.Items, err
+}
+
+type apiProbeAuth struct {
+	Type     string `json:"type"`
+	Username string `json:"username"`
+}
+
+type apiProbe struct {
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	Kind               string        `json:"kind"`
+	Target             string        `json:"target"`
+	Method             string        `json:"method"`
+	ExpectStatus       *int64        `json:"expect_status"`
+	ExpectStatuses     *string       `json:"expect_statuses"`
+	ExpectHeader       *string       `json:"expect_header"`
+	BodyContains       *string       `json:"body_contains"`
+	BodyNotContains    *string       `json:"body_not_contains"`
+	JSONPath           *string       `json:"json_path"`
+	ExpectValue        *string       `json:"expect_value"`
+	ExpectSet          *string       `json:"expect_set"`
+	IgnoreCase         bool          `json:"ignore_case"`
+	Resolver           *string       `json:"resolver"`
+	Send               *string       `json:"send"`
+	RequestHeaders     []string      `json:"request_headers"`
+	RequestBody        *string       `json:"request_body"`
+	RequestContentType *string       `json:"request_content_type"`
+	Auth               *apiProbeAuth `json:"auth"`
+	MaxMs              *int64        `json:"max_ms"`
+	IntervalSecs       int64         `json:"interval_secs"`
+	ChannelID          *string       `json:"channel_id"`
+	PolicyID           *string       `json:"policy_id"`
+	Paused             bool          `json:"paused"`
+	State              string        `json:"state"`
+	Host               *string       `json:"host"`
+	Expect             string        `json:"expect"`
+	// Null when the target has no registered domain to watch.
+	DomainExpiry *struct {
+		Enabled bool `json:"enabled"`
+	} `json:"domain_expiry"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (c *Client) Probes(ctx context.Context) ([]apiProbe, error) {
+	var list struct {
+		Items []apiProbe `json:"items"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/mast/probes", nil, &list)
+	return list.Items, err
+}
+
+func (c *Client) GetProbe(ctx context.Context, id string) (*apiProbe, error) {
+	var pr apiProbe
+	err := c.do(ctx, http.MethodGet, "/v1/mast/probes/"+url.PathEscape(id), nil, &pr)
+	return &pr, err
+}
+
+func (c *Client) CreateProbe(ctx context.Context, body map[string]any) (*apiProbe, error) {
+	var pr apiProbe
+	err := c.do(ctx, http.MethodPost, "/v1/mast/probes", body, &pr)
+	return &pr, err
+}
+
+func (c *Client) UpdateProbe(ctx context.Context, id string, body map[string]any) (*apiProbe, error) {
+	var pr apiProbe
+	err := c.do(ctx, http.MethodPatch, "/v1/mast/probes/"+url.PathEscape(id), body, &pr)
+	return &pr, err
+}
+
+func (c *Client) DeleteProbe(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/mast/probes/"+url.PathEscape(id), nil, nil)
+}
+
+// FindProbe takes a probe id, or a name that exactly one probe has.
+func (c *Client) FindProbe(ctx context.Context, idOrName string) (*apiProbe, error) {
+	if strings.HasPrefix(idOrName, "pr_") {
+		return c.GetProbe(ctx, idOrName)
+	}
+	list, err := c.Probes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var found []apiProbe
+	for _, pr := range list {
+		if pr.Name == idOrName {
+			found = append(found, pr)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return nil, fmt.Errorf("no probe named %q", idOrName)
+	case 1:
+		return &found[0], nil
+	}
+	ids := make([]string, len(found))
+	for i, pr := range found {
+		ids[i] = pr.ID
+	}
+	return nil, fmt.Errorf("%d probes are named %q (%s); use the id", len(found), idOrName, strings.Join(ids, ", "))
 }
