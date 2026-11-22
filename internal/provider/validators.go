@@ -19,40 +19,40 @@ const channelNameMax = 32
 // refuse, or store spelled differently, fails at plan time instead.
 func channelNameProblem(name string) string {
 	if name == "" {
-		return "a channel name can't be empty"
+		return "a name can't be empty"
 	}
 	if !norm.NFC.IsNormalString(name) {
-		return "a channel name must be in composed (NFC) form; the server stores it that way"
+		return "a name must be in composed (NFC) form; the server stores it that way"
 	}
 	first, _ := utf8.DecodeRuneInString(name)
 	if first == ' ' {
-		return "a channel name can't start with a space"
+		return "a name can't start with a space"
 	}
 	afterSpace := false
 	for i, r := range name {
 		if r == ' ' {
 			if afterSpace {
-				return "a channel name can't have two spaces in a row"
+				return "a name can't have two spaces in a row"
 			}
 			afterSpace = true
 			continue
 		}
 		afterSpace = false
 		if unicode.ToLower(r) != r || unicode.IsTitle(r) {
-			return fmt.Sprintf("channel names are lowercase (%q)", r)
+			return fmt.Sprintf("names are lowercase (%q)", r)
 		}
 		if i == 0 && !letterOrDigit(r) {
-			return fmt.Sprintf("a channel name starts with a letter or a digit, not %q", r)
+			return fmt.Sprintf("a name starts with a letter or a digit, not %q", r)
 		}
 		if !letterOrDigit(r) && r != '.' && r != '_' && r != '-' {
-			return fmt.Sprintf("%q can't be used in a channel name; letters, digits, '.', '_', '-' and single spaces can", r)
+			return fmt.Sprintf("%q can't be used in a name; letters, digits, '.', '_', '-' and single spaces can", r)
 		}
 	}
 	if strings.HasSuffix(name, " ") {
-		return "a channel name can't end with a space"
+		return "a name can't end with a space"
 	}
 	if n := utf8.RuneCountInString(name); n > channelNameMax {
-		return fmt.Sprintf("a channel name is at most %d characters, and this one is %d", channelNameMax, n)
+		return fmt.Sprintf("a name is at most %d characters, and this one is %d", channelNameMax, n)
 	}
 	return ""
 }
@@ -80,7 +80,7 @@ func (channelNameValidator) ValidateString(_ context.Context, req validator.Stri
 		return
 	}
 	if p := channelNameProblem(req.ConfigValue.ValueString()); p != "" {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid channel name", p+".")
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid name", p+".")
 	}
 }
 

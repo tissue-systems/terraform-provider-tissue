@@ -471,6 +471,82 @@ resource "tissue_mast_vital" "old" {
 	})
 }
 
+// tissue_mast_channel is the deprecated name of tissue_mast_alert_source. It
+// keeps working, a moved block carries its state over without touching the
+// alert source on the server, and the data source answers under both names.
+func TestAccChannelIsTheDeprecatedName(t *testing.T) {
+	f := newFakeMast(t)
+	p := providerBlock(f, fullToken)
+	var id, url string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: p + `
+resource "tissue_mast_channel" "deploys" {
+  name  = "deploys"
+  sound = "chirp"
+}`,
+				Check: func(s *terraform.State) error {
+					attrs := s.RootModule().Resources["tissue_mast_channel.deploys"].Primary.Attributes
+					id, url = attrs["id"], attrs["url"]
+					return nil
+				},
+			},
+			{
+				Config: p + `
+moved {
+  from = tissue_mast_channel.deploys
+  to   = tissue_mast_alert_source.deploys
+}
+
+resource "tissue_mast_alert_source" "deploys" {
+  name  = "deploys"
+  sound = "chirp"
+}
+
+data "tissue_mast_alert_source" "deploys" {
+  name = tissue_mast_alert_source.deploys.name
+}
+
+data "tissue_mast_channel" "deploys" {
+  name = tissue_mast_alert_source.deploys.name
+}`,
+				ConfigPlanChecks: noChange("tissue_mast_alert_source.deploys"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.tissue_mast_alert_source.deploys", "kind", "channel"),
+					resource.TestCheckResourceAttr("data.tissue_mast_alert_source.deploys", "heartbeat", "false"),
+					resource.TestCheckResourceAttrPair("data.tissue_mast_channel.deploys", "id",
+						"data.tissue_mast_alert_source.deploys", "id"),
+					func(s *terraform.State) error {
+						if _, still := s.RootModule().Resources["tissue_mast_channel.deploys"]; still {
+							return fmt.Errorf("tissue_mast_channel.deploys is still in state")
+						}
+						attrs := s.RootModule().Resources["tissue_mast_alert_source.deploys"].Primary.Attributes
+						if attrs["id"] != id || attrs["url"] != url {
+							return fmt.Errorf("the alert source was %s and is %s after the move", id, attrs["id"])
+						}
+						if attrs["sound"] != "chirp" {
+							return fmt.Errorf("sound is %q after the move", attrs["sound"])
+						}
+						if n := len(f.channels); n != 1 {
+							return fmt.Errorf("the server has %d alert sources after the move", n)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				ResourceName:      "tissue_mast_alert_source.deploys",
+				ImportState:       true,
+				ImportStateId:     "deploys",
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
 func TestAccRotationAndOverrides(t *testing.T) {
 	f := newFakeMast(t)
 	p := providerBlock(f, fullToken)
@@ -737,7 +813,7 @@ func TestAccPolicyRules(t *testing.T) {
 	cases := map[string]string{
 		`steps = [{ target = "user", priority = "page" }]`:                             `needs`,
 		`steps = [{ target = "everyone", user_id = "usr_ana", priority = "page" }]`:    `everyone`,
-		`steps = [{ target = "channel", channel_id = "ops", priority = "page" }]`:      `must be a channel id`,
+		`steps = [{ target = "channel", channel_id = "ops", priority = "page" }]`:      `must be an alert source id`,
 		"repeat_count = 2\n  steps = [{ target = \"everyone\", priority = \"page\" }]": `repeat_every_secs`,
 		`steps = [{ target = "oncall", rotation_id = "primary", priority = "page" }]`:  `must be a rotation id`,
 	}
@@ -1073,7 +1149,8 @@ resource "tissue_mast_policy" "b" {
 		Steps: []resource.TestStep{
 			{Config: config},
 			importing("tissue_mast_channel.c", "backup", `is a\s+heartbeat\.\s+Import\s+it\s+as\s+tissue_mast_heartbeat`),
-			importing("tissue_mast_channel.c", "nope", `Finding the channel failed`),
+			importing("tissue_mast_channel.c", "nope", `Finding the alert source failed`),
+			importing("tissue_mast_heartbeat.backup", "c", `is an\s+alert\s+source\.\s+Import\s+it\s+as\s+tissue_mast_alert_source`),
 			importing("tissue_mast_rotation.a", "nope", `no rotation named "nope"`),
 			importing("tissue_mast_rotation.a", "twin", `2 rotations are named "twin"`),
 			importing("tissue_mast_policy.a", "twin", `2 policies are named "twin"`),

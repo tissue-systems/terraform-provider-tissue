@@ -21,19 +21,24 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Channels and heartbeats are one API object told apart by kind, and so one
-// implementation here. They are separate resource types because a heartbeat
-// has a dozen settings a channel doesn't, and the kind can't change after
-// create.
+// Alert sources and heartbeats are one API object told apart by kind, and so
+// one implementation here. They are separate resource types because a
+// heartbeat has a dozen settings an alert source doesn't, and the kind can't
+// change after create.
 //
-// kind is the API's word, and the API's word for a heartbeat is "vital".
-// typeName is what follows tissue_mast_ in the resource type. A heartbeat is
-// registered twice: as tissue_mast_heartbeat, and as tissue_mast_vital, the
-// deprecated name with the same schema.
+// kind is the API's word: "channel" for an alert source, "vital" for a
+// heartbeat. typeName is what follows tissue_mast_ in the resource type. Each
+// is registered twice, under its name and under the deprecated one with the
+// same schema: tissue_mast_alert_source and tissue_mast_channel,
+// tissue_mast_heartbeat and tissue_mast_vital.
 type channelResource struct {
 	kind     string
 	typeName string
 	client   *Client
+}
+
+func newAlertSourceResource() resource.Resource {
+	return &channelResource{kind: "channel", typeName: "alert_source"}
 }
 
 func newChannelResource() resource.Resource {
@@ -53,7 +58,22 @@ func noun(kind string) string {
 	if kind == "vital" {
 		return "heartbeat"
 	}
-	return kind
+	return "alert source"
+}
+
+// typeOf is the resource type that manages an API kind.
+func typeOf(kind string) string {
+	if kind == "vital" {
+		return "tissue_mast_heartbeat"
+	}
+	return "tissue_mast_alert_source"
+}
+
+// deprecatedNames maps each resource type to the old name a moved block can
+// carry state from.
+var deprecatedNames = map[string]string{
+	"alert_source": "tissue_mast_channel",
+	"heartbeat":    "tissue_mast_vital",
 }
 
 type channelModel struct {
@@ -229,18 +249,19 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			MarkdownDescription: "Whether the " + what + " is archived. An archived " + what + " takes no sends " +
 				"and its URL answers 404 until it's restored. Leave it unset to follow the app, where people archive " +
 				"and restore; set it to `false` to restore one archived there. Restoring counts against the plan's " +
-				"channel limit again.",
+				"limit again.",
 			Optional:      true,
 			Computed:      true,
 			PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 		},
 	}
 
-	desc := "A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. " +
-		"A heartbeat, which the API lists as a channel with `kind = \"vital\"`, is managed with `tissue_mast_heartbeat`."
+	desc := "A Mast alert source: a URL that turns what is sent to it into notifications on the phones of the " +
+		"account. A heartbeat, which the API lists alongside alert sources with `kind = \"vital\"`, is managed " +
+		"with `tissue_mast_heartbeat`."
 	deprecation := ""
 	if r.kind == "vital" {
-		desc = "A Mast heartbeat: a channel that expects a beat on a schedule and pages when one is late. " +
+		desc = "A Mast heartbeat: a URL that expects a beat on a schedule and pages when one is late. " +
 			"Send a beat by requesting its `url`."
 		attrs["period_secs"] = optionalInt("Seconds between beats for an interval heartbeat. `0` when the heartbeat runs on a `schedule`.",
 			secs(2592000))
@@ -286,14 +307,16 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 		}
 	}
-	if r.typeName == "vital" {
-		desc = "The deprecated name of `tissue_mast_heartbeat`. It takes the same arguments and manages the same " +
-			"heartbeat. To move a resource over, change its type to `tissue_mast_heartbeat` and add a `moved` block " +
-			"from the old address to the new one, which needs Terraform 1.8 or later. Without `moved` between " +
-			"resource types, run `terraform state rm` on the old address and `terraform import` on the new one. " +
-			"Either way the heartbeat keeps its id and its URL."
-		deprecation = "tissue_mast_vital is the deprecated name of tissue_mast_heartbeat. Change the resource type " +
-			"and add a moved block from tissue_mast_vital.NAME to tissue_mast_heartbeat.NAME."
+	if r.typeName == "vital" || r.typeName == "channel" {
+		what, to := noun(r.kind), typeOf(r.kind)
+		from := "tissue_mast_" + r.typeName
+		desc = "The deprecated name of `" + to + "`. It takes the same arguments and manages the same " + what +
+			". To move a resource over, change its type to `" + to + "` and add a `moved` block from the old " +
+			"address to the new one, which needs Terraform 1.8 or later. Without `moved` between resource types, " +
+			"run `terraform state rm` on the old address and `terraform import` on the new one. Either way the " +
+			what + " keeps its id and its URL."
+		deprecation = from + " is the deprecated name of " + to + ". Change the resource type and add a moved " +
+			"block from " + from + ".NAME to " + to + ".NAME."
 	}
 	resp.Schema = schema.Schema{MarkdownDescription: desc, DeprecationMessage: deprecation, Attributes: attrs}
 }
@@ -328,7 +351,7 @@ func (m sameAs) PlanModifyString(ctx context.Context, req planmodifier.StringReq
 }
 
 // maxPriorityModifier holds the line the server holds: a token can choose a
-// new channel's ceiling up to loud, and can't change it afterwards.
+// new alert source's ceiling up to loud, and can't change it afterwards.
 type maxPriorityModifier struct{ what string }
 
 func (maxPriorityModifier) Description(context.Context) string {
@@ -463,7 +486,7 @@ func (r *channelResource) Create(ctx context.Context, req resource.CreateRequest
 
 	if len(later) > 0 {
 		if _, err := r.client.UpdateChannel(ctx, created.ID, later); err != nil {
-			// The channel exists; save it so Terraform taints it rather than
+			// It exists; save it so Terraform taints it rather than
 			// losing track of it.
 			state := modelFromAPI(created, plan)
 			state.PolicyID = types.StringValue("")
@@ -485,7 +508,7 @@ func (r *channelResource) Create(ctx context.Context, req resource.CreateRequest
 	resp.Diagnostics.Append(r.set(ctx, &resp.State, state)...)
 }
 
-// read returns nil when the channel is gone.
+// read returns nil when the alert source or heartbeat is gone.
 func (r *channelResource) read(ctx context.Context, id string, knownURL *string, prior *vitalModel) (*vitalModel, error) {
 	list, err := r.client.Channels(ctx)
 	if err != nil {
@@ -499,8 +522,8 @@ func (r *channelResource) read(ctx context.Context, id string, knownURL *string,
 		}
 	}
 	if ch == nil {
-		// Archived channels drop out of the list but still answer by id,
-		// without their URL.
+		// Archived ones drop out of the list but still answer by id, without
+		// their URL.
 		ch, err = r.client.GetChannel(ctx, id)
 		if isNotFound(err) {
 			return nil, nil
@@ -658,20 +681,21 @@ func (r *channelResource) ImportState(ctx context.Context, req resource.ImportSt
 		return
 	}
 	if ch.Kind != r.kind {
-		other := "tissue_mast_" + noun(ch.Kind)
 		resp.Diagnostics.AddError("Wrong resource type",
-			fmt.Sprintf("%s (%s) is a %s. Import it as %s.", ch.Name, ch.ID, noun(ch.Kind), other))
+			fmt.Sprintf("%s (%s) is %s. Import it as %s.", ch.Name, ch.ID, a(noun(ch.Kind)), typeOf(ch.Kind)))
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), ch.ID)...)
 }
 
-// MoveState lets a moved block carry a tissue_mast_vital into
-// tissue_mast_heartbeat. The two share a schema, so the state goes across as
-// it is. A state written before heartbeat_priority existed has only
-// vital_priority, and the value is copied over.
+// MoveState lets a moved block carry a tissue_mast_channel into
+// tissue_mast_alert_source, and a tissue_mast_vital into
+// tissue_mast_heartbeat. Each pair shares a schema, so the state goes across
+// as it is. A heartbeat state written before heartbeat_priority existed has
+// only vital_priority, and the value is copied over.
 func (r *channelResource) MoveState(ctx context.Context) []resource.StateMover {
-	if r.typeName != "heartbeat" {
+	from, ok := deprecatedNames[r.typeName]
+	if !ok {
 		return nil
 	}
 	var source resource.SchemaResponse
@@ -679,20 +703,28 @@ func (r *channelResource) MoveState(ctx context.Context) []resource.StateMover {
 	return []resource.StateMover{{
 		SourceSchema: &source.Schema,
 		StateMover: func(ctx context.Context, req resource.MoveStateRequest, resp *resource.MoveStateResponse) {
-			if req.SourceTypeName != "tissue_mast_vital" || req.SourceState == nil {
+			if req.SourceTypeName != from || req.SourceState == nil {
 				return
 			}
-			var m vitalModel
-			resp.Diagnostics.Append(req.SourceState.Get(ctx, &m)...)
+			m, diags := r.get(ctx, req.SourceState)
+			resp.Diagnostics.Append(diags...)
 			if resp.Diagnostics.HasError() {
 				return
 			}
 			if m.HeartbeatPriority.IsNull() {
 				m.HeartbeatPriority = m.VitalPriority
 			}
-			resp.Diagnostics.Append(resp.TargetState.Set(ctx, &m)...)
+			resp.Diagnostics.Append(r.set(ctx, &resp.TargetState, m)...)
 		},
 	}}
+}
+
+// a puts the article in front of a noun.
+func a(noun string) string {
+	if strings.ContainsRune("aeiou", rune(noun[0])) {
+		return "an " + noun
+	}
+	return "a " + noun
 }
 
 var (

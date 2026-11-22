@@ -50,7 +50,7 @@ func (r *policyResource) Metadata(_ context.Context, req resource.MetadataReques
 func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "An escalation policy: who a page goes to, and who it goes to next while nobody " +
-			"acknowledges it. Attach it to a channel or heartbeat with `policy_id`.",
+			"acknowledges it. Attach it to an alert source or heartbeat with `policy_id`.",
 		Attributes: map[string]schema.Attribute{
 			"id": computedString("The policy id, `po_...`."),
 			"name": schema.StringAttribute{
@@ -73,7 +73,7 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 						},
 						"target": schema.StringAttribute{
 							MarkdownDescription: "Who the step pages: `oncall` (whoever holds `rotation_id`), `next` " +
-								"(whoever has the rotation's next shift), `everyone`, `user` or `channel`.",
+								"(whoever has the rotation's next shift), `everyone`, `user` or `channel` (an alert source).",
 							Required: true,
 							Validators: []validator.String{
 								stringvalidator.OneOf("oncall", "next", "everyone", "user", "channel"),
@@ -90,10 +90,10 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 							Optional:            true,
 						},
 						"channel_id": schema.StringAttribute{
-							MarkdownDescription: "The channel a `channel` step sends to, `mc_...`.",
+							MarkdownDescription: "The alert source a `channel` step sends to, `mc_...`.",
 							Optional:            true,
 							Validators: []validator.String{
-								stringvalidator.RegexMatches(regexp.MustCompile(`^mc_`), "must be a channel id, mc_..."),
+								stringvalidator.RegexMatches(regexp.MustCompile(`^mc_`), "must be an alert source id, mc_..."),
 							},
 						},
 						"priority": schema.StringAttribute{
@@ -156,7 +156,7 @@ func (r *policyResource) ValidateConfig(ctx context.Context, req resource.Valida
 		case "channel":
 			allowed["channel_id"] = true
 			if !given(s.ChannelID) {
-				resp.Diagnostics.AddAttributeError(at.AtName("channel_id"), "A channel step needs channel_id", "Name the channel it sends to.")
+				resp.Diagnostics.AddAttributeError(at.AtName("channel_id"), "A channel step needs channel_id", "Name the alert source it sends to.")
 			}
 		}
 		for name, v := range map[string]types.String{"rotation_id": s.RotationID, "user_id": s.UserID, "channel_id": s.ChannelID} {
