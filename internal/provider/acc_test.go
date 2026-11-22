@@ -547,6 +547,81 @@ data "tissue_mast_channel" "deploys" {
 	})
 }
 
+// A probe takes its alert source as alert_source_id or as the deprecated
+// channel_id, the state holds both, and the request carries channel_id.
+func TestAccProbeAlertSourceID(t *testing.T) {
+	f := newFakeMast(t)
+	p := providerBlock(f, fullToken) + `
+resource "tissue_mast_alert_source" "ops" {
+  name = "ops"
+}
+`
+	const addr = "tissue_mast_probe.shop"
+	probe := func(arg string) string {
+		return p + `
+resource "tissue_mast_probe" "shop" {
+  target = "https://shop.acme.test/health"
+  ` + arg + `
+}
+`
+	}
+	sentTo := func(want string) resource.TestCheckFunc {
+		return func(s *terraform.State) error {
+			if want != "" {
+				want = s.RootModule().Resources["tissue_mast_alert_source.ops"].Primary.ID
+			}
+			for _, pr := range f.probes {
+				if pr.ChannelID != want {
+					return fmt.Errorf("the server has the probe on %q, want %q", pr.ChannelID, want)
+				}
+			}
+			return nil
+		}
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: probe(`alert_source_id = tissue_mast_alert_source.ops.id
+  channel_id      = tissue_mast_alert_source.ops.id`),
+				ExpectError: regexp.MustCompile(`(?s)Invalid Attribute Combination.*channel_id`),
+			},
+			{
+				Config: probe(`channel_id = tissue_mast_alert_source.ops.id`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrPair(addr, "channel_id", "tissue_mast_alert_source.ops", "id"),
+					resource.TestCheckResourceAttrPair(addr, "alert_source_id", "tissue_mast_alert_source.ops", "id"),
+					sentTo("ops"),
+				),
+			},
+			{
+				// The other spelling names the same setting, so nothing changes.
+				Config:           probe(`alert_source_id = tissue_mast_alert_source.ops.id`),
+				ConfigPlanChecks: noChange(addr),
+			},
+			{
+				// With neither, the probe is taken off the alert source.
+				Config: probe(``),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(addr, "channel_id"),
+					resource.TestCheckNoResourceAttr(addr, "alert_source_id"),
+					sentTo(""),
+				),
+			},
+			{
+				Config: probe(`alert_source_id = tissue_mast_alert_source.ops.id`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrPair(addr, "channel_id", "tissue_mast_alert_source.ops", "id"),
+					resource.TestCheckResourceAttrPair(addr, "alert_source_id", "tissue_mast_alert_source.ops", "id"),
+					sentTo("ops"),
+				),
+			},
+			{ResourceName: addr, ImportState: true, ImportStateIdFunc: stateID(addr), ImportStateVerify: true},
+		},
+	})
+}
+
 func TestAccRotationAndOverrides(t *testing.T) {
 	f := newFakeMast(t)
 	p := providerBlock(f, fullToken)
@@ -1667,6 +1742,7 @@ data "tissue_mast_probe" "by_id" {
 					resource.TestCheckResourceAttr("data.tissue_mast_probe.by_id", "name", "shop"),
 					resource.TestCheckResourceAttr("data.tissue_mast_probe.by_id", "host", "web1"),
 					resource.TestCheckNoResourceAttr("data.tissue_mast_probe.by_id", "channel_id"),
+					resource.TestCheckNoResourceAttr("data.tissue_mast_probe.by_id", "alert_source_id"),
 				),
 			},
 			{

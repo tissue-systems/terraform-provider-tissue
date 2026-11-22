@@ -139,3 +139,49 @@ func TestMoveFromAChannelState(t *testing.T) {
 	}
 }
 
+// A probe state saved before alert_source_id existed still reads, with the
+// new attribute empty until the next refresh fills it in.
+func TestAProbeStateWithoutAlertSourceIDStillReads(t *testing.T) {
+	ctx := context.Background()
+	server, err := providerserver.NewProtocol6WithError(New("test")())()
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemas, err := server.GetProviderSchema(ctx, &tfprotov6.GetProviderSchemaRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := schemas.ResourceSchemas["tissue_mast_probe"]
+	saved := `{"id":"pr_1","name":"shop","kind":"http","target":"https://shop.acme.test/health","method":"GET",` +
+		`"interval_secs":300,"expect":"up","expect_status":null,"expect_statuses":null,"expect_header":null,` +
+		`"body_contains":null,"body_not_contains":null,"json_path":null,"expect_value":null,"expect_set":null,` +
+		`"ignore_case":false,"resolver":null,"send":null,"request_headers":null,"request_body":null,` +
+		`"request_content_type":null,"auth":null,"max_ms":null,"channel_id":"mc_1","policy_id":null,` +
+		`"host":null,"paused":false,"domain_expiry":true,"created_at":"2026-01-01T00:00:00.000Z"}`
+	resp, err := server.UpgradeResourceState(ctx, &tfprotov6.UpgradeResourceStateRequest{
+		TypeName: "tissue_mast_probe",
+		Version:  probe.Version,
+		RawState: &tfprotov6.RawState{JSON: []byte(saved)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range resp.Diagnostics {
+		t.Errorf("%s: %s", d.Summary, d.Detail)
+	}
+	state, err := resp.UpgradedState.Unmarshal(probe.ValueType())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs := map[string]tftypes.Value{}
+	if err := state.As(&attrs); err != nil {
+		t.Fatal(err)
+	}
+	var channel string
+	if err := attrs["channel_id"].As(&channel); err != nil || channel != "mc_1" {
+		t.Errorf("channel_id is %q (%v)", channel, err)
+	}
+	if !attrs["alert_source_id"].IsNull() {
+		t.Errorf("alert_source_id is %v", attrs["alert_source_id"])
+	}
+}

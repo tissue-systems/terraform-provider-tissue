@@ -301,6 +301,7 @@ type probeDataModel struct {
 	Paused       types.Bool   `tfsdk:"paused"`
 	State        types.String `tfsdk:"state"`
 	ChannelID    types.String `tfsdk:"channel_id"`
+	AlertSource  types.String `tfsdk:"alert_source_id"`
 	PolicyID     types.String `tfsdk:"policy_id"`
 	Host         types.String `tfsdk:"host"`
 }
@@ -313,18 +314,19 @@ func (d *probeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A probe, by id or by name, for reading one someone made in the app.",
 		Attributes: map[string]schema.Attribute{
-			"id":            schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe id."},
-			"name":          schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe name. It has to be unique to look it up this way."},
-			"kind":          schema.StringAttribute{Computed: true, MarkdownDescription: "`http`, `tcp`, `tls`, `dns`, `icmp` or `smtp`."},
-			"target":        schema.StringAttribute{Computed: true},
-			"method":        schema.StringAttribute{Computed: true},
-			"interval_secs": schema.Int64Attribute{Computed: true},
-			"expect":        schema.StringAttribute{Computed: true, MarkdownDescription: "`up`, or `down` for a target that should not answer."},
-			"paused":        schema.BoolAttribute{Computed: true},
-			"state":         schema.StringAttribute{Computed: true, MarkdownDescription: "What the checks found as of the read, such as `down`; `pending` before the first check, `paused` while the probe is paused."},
-			"channel_id":    schema.StringAttribute{Computed: true, MarkdownDescription: "The alert source its pages go to, if it has one."},
-			"policy_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "The policy its pages follow, if it has one."},
-			"host":          schema.StringAttribute{Computed: true, MarkdownDescription: "The machine the target runs on, if the probe names one."},
+			"id":              schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe id."},
+			"name":            schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe name. It has to be unique to look it up this way."},
+			"kind":            schema.StringAttribute{Computed: true, MarkdownDescription: "`http`, `tcp`, `tls`, `dns`, `icmp` or `smtp`."},
+			"target":          schema.StringAttribute{Computed: true},
+			"method":          schema.StringAttribute{Computed: true},
+			"interval_secs":   schema.Int64Attribute{Computed: true},
+			"expect":          schema.StringAttribute{Computed: true, MarkdownDescription: "`up`, or `down` for a target that should not answer."},
+			"paused":          schema.BoolAttribute{Computed: true},
+			"state":           schema.StringAttribute{Computed: true, MarkdownDescription: "What the checks found as of the read, such as `down`; `pending` before the first check, `paused` while the probe is paused."},
+			"alert_source_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The alert source its pages go to, if it has one."},
+			"channel_id":      schema.StringAttribute{Computed: true, MarkdownDescription: "The same as `alert_source_id`, under the API's older name."},
+			"policy_id":       schema.StringAttribute{Computed: true, MarkdownDescription: "The policy its pages follow, if it has one."},
+			"host":            schema.StringAttribute{Computed: true, MarkdownDescription: "The machine the target runs on, if the probe names one."},
 		},
 	}
 }
@@ -363,6 +365,7 @@ func (d *probeDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		Paused:       types.BoolValue(pr.Paused),
 		State:        types.StringValue(pr.State),
 		ChannelID:    text(pr.ChannelID),
+		AlertSource:  text(pr.ChannelID),
 		PolicyID:     text(pr.PolicyID),
 		Host:         text(pr.Host),
 	})...)
