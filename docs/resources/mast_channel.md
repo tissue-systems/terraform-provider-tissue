@@ -3,12 +3,12 @@
 page_title: "tissue_mast_channel Resource - tissue"
 subcategory: ""
 description: |-
-  A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. Channels with kind = "vital" in the API are managed with tissue_mast_vital.
+  A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. A heartbeat, which the API lists as a channel with kind = "vital", is managed with tissue_mast_heartbeat.
 ---
 
 # tissue_mast_channel (Resource)
 
-A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. Channels with `kind = "vital"` in the API are managed with `tissue_mast_vital`.
+A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. A heartbeat, which the API lists as a channel with `kind = "vital"`, is managed with `tissue_mast_heartbeat`.
 
 ## Example Usage
 

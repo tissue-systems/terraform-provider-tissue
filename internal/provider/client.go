@@ -27,7 +27,7 @@ type Client struct {
 	// not interleave.
 	rotationLocks sync.Map
 
-	// Every channel and vital refreshes from the whole channel list and the
+	// Every channel and heartbeat refreshes from the whole channel list and the
 	// whole policy list. Each is read once and kept until the next write.
 	channels cached[[]apiChannel]
 	policies cached[[]apiPolicy]
@@ -233,7 +233,7 @@ func (c *Client) GetChannel(ctx context.Context, idOrName string) (*apiChannel, 
 	return &ch, err
 }
 
-// Channels lists the live channels and vitals, keys and URLs included. There
+// Channels lists the live channels and heartbeats, keys and URLs included. There
 // is no list route of its own: the app's sync payload is the list.
 func (c *Client) Channels(ctx context.Context) ([]apiChannel, error) {
 	if c == nil {

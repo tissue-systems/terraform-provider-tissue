@@ -148,7 +148,7 @@ func (overrideBoundValidator) ValidateString(_ context.Context, req validator.St
 	}
 }
 
-// zoneProblem is the server's validate_zone, which it applies to a vital's
+// zoneProblem is the server's validate_zone, which it applies to a heartbeat's
 // schedule_tz. quiet_tz is stored without a check, and delivery reads a zone
 // it doesn't know as UTC, so a typo there would move the quiet window without
 // a word.

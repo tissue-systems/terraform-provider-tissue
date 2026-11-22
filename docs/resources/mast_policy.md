@@ -3,12 +3,12 @@
 page_title: "tissue_mast_policy Resource - tissue"
 subcategory: ""
 description: |-
-  An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to a channel or vital with policy_id.
+  An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to a channel or heartbeat with policy_id.
 ---
 
 # tissue_mast_policy (Resource)
 
-An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to a channel or vital with `policy_id`.
+An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to a channel or heartbeat with `policy_id`.
 
 ## Example Usage
 

@@ -252,7 +252,7 @@ func TestAccTokenFromEnv(t *testing.T) {
 	})
 }
 
-func TestAccVital(t *testing.T) {
+func TestAccHeartbeat(t *testing.T) {
 	f := newFakeMast(t)
 	p := providerBlock(f, fullToken)
 
@@ -261,7 +261,7 @@ func TestAccVital(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: p + `
-resource "tissue_mast_vital" "backup" {
+resource "tissue_mast_heartbeat" "backup" {
   name     = "nightly-backup"
   schedule = "0 3 * * *"
 }`,
@@ -269,25 +269,29 @@ resource "tissue_mast_vital" "backup" {
 			},
 			{
 				Config: p + `
-resource "tissue_mast_vital" "backup" {
-  name           = "nightly-backup"
-  schedule       = "0 3 * * *"
-  schedule_tz    = "America/Los_Angeles"
-  grace_secs     = 1800
-  host           = "db1"
-  vital_priority = "page"
-  paused         = true
+resource "tissue_mast_heartbeat" "backup" {
+  name               = "nightly-backup"
+  schedule           = "0 3 * * *"
+  schedule_tz        = "America/Los_Angeles"
+  grace_secs         = 1800
+  host               = "db1"
+  heartbeat_priority = "page"
+  paused             = true
 }`,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("tissue_mast_vital.backup", "paused", "true"),
-					resource.TestCheckResourceAttr("tissue_mast_vital.backup", "period_secs", "0"),
-					resource.TestCheckResourceAttr("tissue_mast_vital.backup", "fail_threshold", "1"),
-					resource.TestCheckResourceAttr("tissue_mast_vital.backup", "smart_early_warn", "false"),
-					resource.TestCheckResourceAttr("tissue_mast_vital.backup", "max_priority", "loud"),
-					resource.TestCheckResourceAttrSet("tissue_mast_vital.backup", "url"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "paused", "true"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "period_secs", "0"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "fail_threshold", "1"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "smart_early_warn", "false"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "max_priority", "loud"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "heartbeat_priority", "page"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "vital_priority", "page"),
+					resource.TestCheckResourceAttrSet("tissue_mast_heartbeat.backup", "url"),
 					func(*terraform.State) error {
-						if ch := f.resolveChannel("nightly-backup"); ch.Kind != "vital" || ch.VitalState != "paused" {
-							return fmt.Errorf("server has kind %s, state %s", ch.Kind, ch.VitalState)
+						// The API knows a heartbeat as kind "vital".
+						ch := f.resolveChannel("nightly-backup")
+						if ch.Kind != "vital" || ch.VitalState != "paused" || ch.VitalPriority != "page" {
+							return fmt.Errorf("server has kind %s, state %s, priority %s", ch.Kind, ch.VitalState, ch.VitalPriority)
 						}
 						return nil
 					},
@@ -303,35 +307,35 @@ resource "tissue_mast_vital" "backup" {
 					})
 				},
 				Config: p + `
-resource "tissue_mast_vital" "backup" {
-  name           = "nightly-backup"
-  schedule       = "0 3 * * *"
-  schedule_tz    = "America/Los_Angeles"
-  grace_secs     = 1800
-  host           = "db1"
-  vital_priority = "page"
+resource "tissue_mast_heartbeat" "backup" {
+  name               = "nightly-backup"
+  schedule           = "0 3 * * *"
+  schedule_tz        = "America/Los_Angeles"
+  grace_secs         = 1800
+  host               = "db1"
+  heartbeat_priority = "page"
 }`,
-				ConfigPlanChecks: noChange("tissue_mast_vital.backup"),
+				ConfigPlanChecks: noChange("tissue_mast_heartbeat.backup"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("tissue_mast_vital.backup", "paused", "false"),
-					resource.TestCheckResourceAttr("tissue_mast_vital.backup", "smart_early_warn", "true"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "paused", "false"),
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.backup", "smart_early_warn", "true"),
 				),
 			},
 			{
-				ResourceName:      "tissue_mast_vital.backup",
+				ResourceName:      "tissue_mast_heartbeat.backup",
 				ImportState:       true,
 				ImportStateId:     "nightly-backup",
 				ImportStateVerify: true,
 			},
 			{
 				Config: p + `
-resource "tissue_mast_vital" "backup" {
-  name           = "nightly-backup"
-  schedule       = "0 3 * * *"
-  schedule_tz    = "America/Los_Angeles"
-  grace_secs     = 1800
-  host           = "db1"
-  vital_priority = "page"
+resource "tissue_mast_heartbeat" "backup" {
+  name               = "nightly-backup"
+  schedule           = "0 3 * * *"
+  schedule_tz        = "America/Los_Angeles"
+  grace_secs         = 1800
+  host               = "db1"
+  heartbeat_priority = "page"
 }
 
 resource "tissue_mast_channel" "wrong" {
@@ -340,7 +344,128 @@ resource "tissue_mast_channel" "wrong" {
 				ResourceName:  "tissue_mast_channel.wrong",
 				ImportState:   true,
 				ImportStateId: "nightly-backup",
-				ExpectError:   regexp.MustCompile(`Import it as\s+tissue_mast_vital`),
+				ExpectError:   regexp.MustCompile(`Import\s+it\s+as\s+tissue_mast_heartbeat`),
+			},
+		},
+	})
+}
+
+// tissue_mast_vital is the deprecated name of tissue_mast_heartbeat, and
+// vital_priority of heartbeat_priority. Both keep working, each priority
+// argument moves the other, and a moved block carries the state to the
+// documented type without touching the heartbeat on the server.
+func TestAccVitalIsTheDeprecatedName(t *testing.T) {
+	f := newFakeMast(t)
+	p := providerBlock(f, fullToken)
+	var id string
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{
+				Config: p + `
+resource "tissue_mast_vital" "queue" {
+  name               = "queue-worker"
+  period_secs        = 300
+  vital_priority     = "page"
+  heartbeat_priority = "page"
+}`,
+				ExpectError: regexp.MustCompile(`(?s)Invalid Attribute Combination.*vital_priority`),
+			},
+			{
+				Config: p + `
+resource "tissue_mast_vital" "queue" {
+  name           = "queue-worker"
+  period_secs    = 300
+  vital_priority = "page"
+}`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("tissue_mast_vital.queue", "vital_priority", "page"),
+					resource.TestCheckResourceAttr("tissue_mast_vital.queue", "heartbeat_priority", "page"),
+					func(s *terraform.State) error {
+						id = s.RootModule().Resources["tissue_mast_vital.queue"].Primary.ID
+						if ch := f.resolveChannel("queue-worker"); ch.Kind != "vital" || ch.VitalPriority != "page" {
+							return fmt.Errorf("server has kind %s, priority %s", ch.Kind, ch.VitalPriority)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				// The other spelling changes the same setting.
+				Config: p + `
+resource "tissue_mast_vital" "queue" {
+  name               = "queue-worker"
+  period_secs        = 300
+  heartbeat_priority = "normal"
+}`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("tissue_mast_vital.queue", "vital_priority", "normal"),
+					resource.TestCheckResourceAttr("tissue_mast_vital.queue", "heartbeat_priority", "normal"),
+				),
+			},
+			{
+				Config: p + `
+moved {
+  from = tissue_mast_vital.queue
+  to   = tissue_mast_heartbeat.queue
+}
+
+resource "tissue_mast_heartbeat" "queue" {
+  name               = "queue-worker"
+  period_secs        = 300
+  heartbeat_priority = "normal"
+}`,
+				ConfigPlanChecks: noChange("tissue_mast_heartbeat.queue"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.queue", "heartbeat_priority", "normal"),
+					func(s *terraform.State) error {
+						if _, still := s.RootModule().Resources["tissue_mast_vital.queue"]; still {
+							return fmt.Errorf("tissue_mast_vital.queue is still in state")
+						}
+						if got := s.RootModule().Resources["tissue_mast_heartbeat.queue"].Primary.ID; got != id {
+							return fmt.Errorf("the heartbeat was %s and is %s after the move", id, got)
+						}
+						if n := len(f.channels); n != 1 {
+							return fmt.Errorf("the server has %d channels after the move", n)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				// A deprecated argument on the documented type still works.
+				Config: p + `
+resource "tissue_mast_heartbeat" "queue" {
+  name           = "queue-worker"
+  period_secs    = 300
+  vital_priority = "loud"
+}
+
+data "tissue_mast_channel" "queue" {
+  name = tissue_mast_heartbeat.queue.name
+}`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("tissue_mast_heartbeat.queue", "heartbeat_priority", "loud"),
+					resource.TestCheckResourceAttr("data.tissue_mast_channel.queue", "kind", "vital"),
+					resource.TestCheckResourceAttr("data.tissue_mast_channel.queue", "heartbeat", "true"),
+				),
+			},
+			{
+				ResourceName: "tissue_mast_vital.old",
+				Config: p + `
+resource "tissue_mast_heartbeat" "queue" {
+  name           = "queue-worker"
+  period_secs    = 300
+  vital_priority = "loud"
+}
+
+resource "tissue_mast_vital" "old" {
+  name = "queue-worker"
+}`,
+				ImportState:        true,
+				ImportStateId:      "queue-worker",
+				ImportStatePersist: false,
 			},
 		},
 	})
@@ -599,6 +724,7 @@ data "tissue_mast_channel" "api" {
 					resource.TestCheckResourceAttrPair("data.tissue_mast_channel.api", "url", "tissue_mast_channel.api", "url"),
 					resource.TestCheckResourceAttrPair("data.tissue_mast_channel.api", "policy_id", "tissue_mast_policy.default", "id"),
 					resource.TestCheckResourceAttr("data.tissue_mast_channel.api", "kind", "channel"),
+					resource.TestCheckResourceAttr("data.tissue_mast_channel.api", "heartbeat", "false"),
 				),
 			},
 		},
@@ -899,7 +1025,7 @@ resource "tissue_mast_policy" "default" {
 func TestAccImportErrors(t *testing.T) {
 	f := newFakeMast(t)
 	config := providerBlock(f, fullToken) + `
-resource "tissue_mast_vital" "backup" {
+resource "tissue_mast_heartbeat" "backup" {
   name       = "backup"
   period_secs = 86400
 }
@@ -946,7 +1072,7 @@ resource "tissue_mast_policy" "b" {
 		ProtoV6ProviderFactories: factories,
 		Steps: []resource.TestStep{
 			{Config: config},
-			importing("tissue_mast_channel.c", "backup", `is a vital\. Import it as\s+tissue_mast_vital`),
+			importing("tissue_mast_channel.c", "backup", `is a\s+heartbeat\.\s+Import\s+it\s+as\s+tissue_mast_heartbeat`),
 			importing("tissue_mast_channel.c", "nope", `Finding the channel failed`),
 			importing("tissue_mast_rotation.a", "nope", `no rotation named "nope"`),
 			importing("tissue_mast_rotation.a", "twin", `2 rotations are named "twin"`),

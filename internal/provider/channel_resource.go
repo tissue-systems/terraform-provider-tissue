@@ -21,16 +21,40 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Channels and vitals are one API object told apart by kind, and so one
-// implementation here. They are separate resource types because a vital has
-// a dozen settings a channel doesn't, and the kind can't change after create.
+// Channels and heartbeats are one API object told apart by kind, and so one
+// implementation here. They are separate resource types because a heartbeat
+// has a dozen settings a channel doesn't, and the kind can't change after
+// create.
+//
+// kind is the API's word, and the API's word for a heartbeat is "vital".
+// typeName is what follows tissue_mast_ in the resource type. A heartbeat is
+// registered twice: as tissue_mast_heartbeat, and as tissue_mast_vital, the
+// deprecated name with the same schema.
 type channelResource struct {
-	kind   string
-	client *Client
+	kind     string
+	typeName string
+	client   *Client
 }
 
-func newChannelResource() resource.Resource { return &channelResource{kind: "channel"} }
-func newVitalResource() resource.Resource   { return &channelResource{kind: "vital"} }
+func newChannelResource() resource.Resource {
+	return &channelResource{kind: "channel", typeName: "channel"}
+}
+
+func newHeartbeatResource() resource.Resource {
+	return &channelResource{kind: "vital", typeName: "heartbeat"}
+}
+
+func newVitalResource() resource.Resource {
+	return &channelResource{kind: "vital", typeName: "vital"}
+}
+
+// noun is the word for an API kind in descriptions and errors.
+func noun(kind string) string {
+	if kind == "vital" {
+		return "heartbeat"
+	}
+	return kind
+}
 
 type channelModel struct {
 	ID                types.String `tfsdk:"id"`
@@ -63,15 +87,20 @@ type vitalModel struct {
 	Schedule        types.String `tfsdk:"schedule"`
 	ScheduleTZ      types.String `tfsdk:"schedule_tz"`
 	MaxDurationSecs types.Int64  `tfsdk:"max_duration_secs"`
-	VitalPriority   types.String `tfsdk:"vital_priority"`
-	FailThreshold   types.Int64  `tfsdk:"fail_threshold"`
-	SmartEarlyWarn  types.Bool   `tfsdk:"smart_early_warn"`
-	Host            types.String `tfsdk:"host"`
-	Paused          types.Bool   `tfsdk:"paused"`
+	// One setting under two names. vital_priority is the deprecated one, and
+	// the two always hold the same value.
+	HeartbeatPriority types.String `tfsdk:"heartbeat_priority"`
+	VitalPriority     types.String `tfsdk:"vital_priority"`
+	FailThreshold     types.Int64  `tfsdk:"fail_threshold"`
+	SmartEarlyWarn    types.Bool   `tfsdk:"smart_early_warn"`
+	Host              types.String `tfsdk:"host"`
+	Paused            types.Bool   `tfsdk:"paused"`
 }
 
 // The fields sent as they are, keyed by their name in both the schema and
-// the API. max_priority is left out: it is sent once, on create.
+// the API. max_priority is left out: it is sent once, on create. The page
+// priority of a heartbeat is left out too, because the API's name for it,
+// vital_priority, is not the schema's.
 func (m *vitalModel) ints() map[string]*types.Int64 {
 	return map[string]*types.Int64{
 		"quiet_start":         &m.QuietStart,
@@ -100,7 +129,6 @@ func (m *vitalModel) strings() map[string]*types.String {
 		"policy_id":        &m.PolicyID,
 		"schedule":         &m.Schedule,
 		"schedule_tz":      &m.ScheduleTZ,
-		"vital_priority":   &m.VitalPriority,
 		"host":             &m.Host,
 	}
 }
@@ -109,7 +137,7 @@ func (m *vitalModel) strings() map[string]*types.String {
 var patchOnly = map[string]bool{"ack_timeout_min": true, "canary_url": true, "policy_id": true}
 
 func (r *channelResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_mast_" + r.kind
+	resp.TypeName = req.ProviderTypeName + "_mast_" + r.typeName
 }
 
 func optionalInt(desc string, v ...validator.Int64) schema.Int64Attribute {
@@ -145,8 +173,9 @@ func secs(max int64) validator.Int64 { return int64validator.Between(0, max) }
 var priorities = []string{"quiet", "normal", "loud", "page"}
 
 func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	what := noun(r.kind)
 	attrs := map[string]schema.Attribute{
-		"id": computedString("The " + r.kind + " id, `mc_...`."),
+		"id": computedString("The " + what + " id, `mc_...`."),
 		"name": schema.StringAttribute{
 			MarkdownDescription: "The name shown in the app and on every notification. Lowercase letters, digits, " +
 				"`.`, `_`, `-` and single spaces, at most 32 characters. Renaming keeps the URL.",
@@ -154,7 +183,7 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			Validators: []validator.String{channelNameValidator{}},
 		},
 		"url": schema.StringAttribute{
-			MarkdownDescription: "The ingest URL. It carries the key, so anyone holding it can send to this " + r.kind + ".",
+			MarkdownDescription: "The ingest URL. It carries the key, so anyone holding it can send to this " + what + ".",
 			Computed:            true,
 			Sensitive:           true,
 			PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
@@ -162,7 +191,7 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		"default_priority": optionalString("Priority of a send that doesn't name one: `quiet`, `normal`, `loud` or `page`. "+
 			"The server's default is `normal`.", stringvalidator.OneOf(priorities...)),
 		"max_priority": schema.StringAttribute{
-			MarkdownDescription: "The highest priority a send can ask for. A new " + r.kind + " can start at `quiet`, " +
+			MarkdownDescription: "The highest priority a send can ask for. A new " + what + " can start at `quiet`, " +
 				"`normal` or `loud` (the default). Raising it to `page` is done in the Mast app, on the owner's phone, " +
 				"and after create the value can only be changed there. Leave it unset to follow the app, or set it to " +
 				"what the app shows.",
@@ -171,7 +200,7 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			Validators: []validator.String{stringvalidator.OneOf(priorities...)},
 			PlanModifiers: []planmodifier.String{
 				stringplanmodifier.UseStateForUnknown(),
-				maxPriorityModifier{kind: r.kind},
+				maxPriorityModifier{what: what},
 			},
 		},
 		"sound": optionalString("The sound a push plays: `default`, `bleep`, `chirp`, `klaxon`, `pager` or `rising`. "+
@@ -193,11 +222,11 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			int64validator.Between(0, 10080)),
 		"canary_url": optionalString("An http or https URL Mast fetches to check the sender is still alive. Empty turns it off.",
 			trimmedValidator{}, stringvalidator.LengthAtMost(2048)),
-		"policy_id": optionalString("The escalation policy pages on this "+r.kind+" follow, `po_...`. Set it to `\"\"` "+
+		"policy_id": optionalString("The escalation policy pages on this "+what+" follow, `po_...`. Set it to `\"\"` "+
 			"to detach one; leaving the argument out keeps whatever the app has.", trimmedValidator{}),
-		"created_at": computedString("When the " + r.kind + " was made."),
+		"created_at": computedString("When the " + what + " was made."),
 		"archived": schema.BoolAttribute{
-			MarkdownDescription: "Whether the " + r.kind + " is archived. An archived " + r.kind + " takes no sends " +
+			MarkdownDescription: "Whether the " + what + " is archived. An archived " + what + " takes no sends " +
 				"and its URL answers 404 until it's restored. Leave it unset to follow the app, where people archive " +
 				"and restore; set it to `false` to restore one archived there. Restoring counts against the plan's " +
 				"channel limit again.",
@@ -208,13 +237,14 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	}
 
 	desc := "A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. " +
-		"Channels with `kind = \"vital\"` in the API are managed with `tissue_mast_vital`."
+		"A heartbeat, which the API lists as a channel with `kind = \"vital\"`, is managed with `tissue_mast_heartbeat`."
+	deprecation := ""
 	if r.kind == "vital" {
-		desc = "A Mast vital: a channel that expects a beat on a schedule and pages when one is late. " +
+		desc = "A Mast heartbeat: a channel that expects a beat on a schedule and pages when one is late. " +
 			"Send a beat by requesting its `url`."
-		attrs["period_secs"] = optionalInt("Seconds between beats for an interval vital. `0` when the vital runs on a `schedule`.",
+		attrs["period_secs"] = optionalInt("Seconds between beats for an interval heartbeat. `0` when the heartbeat runs on a `schedule`.",
 			secs(2592000))
-		attrs["grace_secs"] = optionalInt("How late a beat can be before the vital pages. A `schedule` needs it above 0.",
+		attrs["grace_secs"] = optionalInt("How late a beat can be before the heartbeat pages. A `schedule` needs it above 0.",
 			secs(2592000))
 		attrs["schedule"] = optionalString("A five-field crontab for when the watched job starts, such as `0 3 * * *`.",
 			trimmedValidator{})
@@ -222,11 +252,27 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			zoneValidator{})
 		attrs["max_duration_secs"] = optionalInt("Longest a run between `/start` and its beat may take. `0` is no limit.",
 			secs(2592000))
-		attrs["vital_priority"] = optionalString("Priority of the page a late vital sends. Default `loud`.",
-			stringvalidator.OneOf(priorities...))
+		attrs["heartbeat_priority"] = schema.StringAttribute{
+			MarkdownDescription: "Priority of the page a late heartbeat sends. Default `loud`.",
+			Optional:            true,
+			Computed:            true,
+			Validators: []validator.String{
+				stringvalidator.OneOf(priorities...),
+				stringvalidator.ConflictsWith(path.MatchRoot("vital_priority")),
+			},
+			PlanModifiers: []planmodifier.String{sameAs{other: "vital_priority"}},
+		}
+		attrs["vital_priority"] = schema.StringAttribute{
+			MarkdownDescription: "The deprecated name of `heartbeat_priority`.",
+			DeprecationMessage:  "Use heartbeat_priority. It takes the same values.",
+			Optional:            true,
+			Computed:            true,
+			Validators:          []validator.String{stringvalidator.OneOf(priorities...)},
+			PlanModifiers:       []planmodifier.String{sameAs{other: "heartbeat_priority"}},
+		}
 		attrs["fail_threshold"] = optionalInt("Missed beats in a row before it pages. Default 1.", int64validator.Between(1, 100))
 		attrs["smart_early_warn"] = schema.BoolAttribute{
-			MarkdownDescription: "Warn quietly when beats start arriving later than usual, before the vital is late.",
+			MarkdownDescription: "Warn quietly when beats start arriving later than usual, before the heartbeat is late.",
 			Optional:            true,
 			Computed:            true,
 			PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
@@ -234,18 +280,56 @@ func (r *channelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		attrs["host"] = optionalString("The machine the job runs on, shown with the page. Letters, digits, `.`, `_` and `-`.",
 			trimmedValidator{}, stringvalidator.LengthAtMost(64))
 		attrs["paused"] = schema.BoolAttribute{
-			MarkdownDescription: "Takes the vital off watch. Leave it unset if people pause it from the app.",
+			MarkdownDescription: "Takes the heartbeat off watch. Leave it unset if people pause it from the app.",
 			Optional:            true,
 			Computed:            true,
 			PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 		}
 	}
-	resp.Schema = schema.Schema{MarkdownDescription: desc, Attributes: attrs}
+	if r.typeName == "vital" {
+		desc = "The deprecated name of `tissue_mast_heartbeat`. It takes the same arguments and manages the same " +
+			"heartbeat. To move a resource over, change its type to `tissue_mast_heartbeat` and add a `moved` block " +
+			"from the old address to the new one, which needs Terraform 1.8 or later. Without `moved` between " +
+			"resource types, run `terraform state rm` on the old address and `terraform import` on the new one. " +
+			"Either way the heartbeat keeps its id and its URL."
+		deprecation = "tissue_mast_vital is the deprecated name of tissue_mast_heartbeat. Change the resource type " +
+			"and add a moved block from tissue_mast_vital.NAME to tissue_mast_heartbeat.NAME."
+	}
+	resp.Schema = schema.Schema{MarkdownDescription: desc, DeprecationMessage: deprecation, Attributes: attrs}
+}
+
+// sameAs keeps an attribute equal to the one other attribute that names the
+// same setting. Whichever of the two the configuration sets decides both; with
+// neither set, the value in state stands.
+type sameAs struct{ other string }
+
+func (m sameAs) Description(context.Context) string {
+	return "holds the same value as " + m.other
+}
+
+func (m sameAs) MarkdownDescription(ctx context.Context) string { return m.Description(ctx) }
+
+func (m sameAs) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+	var other types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(m.other), &other)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !other.IsNull() {
+		resp.PlanValue = other
+		return
+	}
+	if !req.StateValue.IsNull() {
+		resp.PlanValue = req.StateValue
+	}
 }
 
 // maxPriorityModifier holds the line the server holds: a token can choose a
 // new channel's ceiling up to loud, and can't change it afterwards.
-type maxPriorityModifier struct{ kind string }
+type maxPriorityModifier struct{ what string }
 
 func (maxPriorityModifier) Description(context.Context) string {
 	return "max_priority is chosen at create and changed only in the app"
@@ -264,7 +348,7 @@ func (m maxPriorityModifier) PlanModifyString(_ context.Context, req planmodifie
 		if want == "page" {
 			resp.Diagnostics.AddAttributeError(req.Path, "max_priority can't start at page",
 				fmt.Sprintf("A new %s's max_priority is loud at most. Create it at loud, then raise it to page "+
-					"in the Mast app on the owner's phone and set max_priority = \"page\" here to match.", m.kind))
+					"in the Mast app on the owner's phone and set max_priority = \"page\" here to match.", m.what))
 		}
 		return
 	}
@@ -275,7 +359,7 @@ func (m maxPriorityModifier) PlanModifyString(_ context.Context, req planmodifie
 		resp.Diagnostics.AddAttributeError(req.Path, "max_priority is changed in the app",
 			fmt.Sprintf("This %s's max_priority is %q and the configuration says %q. It can only be changed in the "+
 				"Mast app, on the owner's phone. Change it there, or set max_priority = %q here, or remove the argument.",
-				m.kind, have, want, have))
+				m.what, have, want, have))
 	}
 }
 
@@ -359,6 +443,7 @@ func (r *channelResource) Create(ctx context.Context, req resource.CreateRequest
 		pick(key, *v, v.ValueString())
 	}
 	pick("max_priority", plan.MaxPriority, plan.MaxPriority.ValueString())
+	pick("vital_priority", plan.HeartbeatPriority, plan.HeartbeatPriority.ValueString())
 	pick("smart_early_warn", plan.SmartEarlyWarn, plan.SmartEarlyWarn.ValueBool())
 	if !plan.Paused.IsNull() && !plan.Paused.IsUnknown() && plan.Paused.ValueBool() {
 		later["vital_state"] = "paused"
@@ -372,7 +457,7 @@ func (r *channelResource) Create(ctx context.Context, req resource.CreateRequest
 
 	created, err := r.client.CreateChannel(ctx, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Creating the "+r.kind+" failed", err.Error())
+		resp.Diagnostics.AddError("Creating the "+noun(r.kind)+" failed", err.Error())
 		return
 	}
 
@@ -383,18 +468,18 @@ func (r *channelResource) Create(ctx context.Context, req resource.CreateRequest
 			state := modelFromAPI(created, plan)
 			state.PolicyID = types.StringValue("")
 			resp.Diagnostics.Append(r.set(ctx, &resp.State, state)...)
-			resp.Diagnostics.AddError("Setting up the "+r.kind+" failed", err.Error())
+			resp.Diagnostics.AddError("Setting up the "+noun(r.kind)+" failed", err.Error())
 			return
 		}
 	}
 
 	state, err := r.read(ctx, created.ID, created.URL, plan)
 	if err != nil {
-		resp.Diagnostics.AddError("Reading the "+r.kind+" back failed", err.Error())
+		resp.Diagnostics.AddError("Reading the "+noun(r.kind)+" back failed", err.Error())
 		return
 	}
 	if state == nil {
-		resp.Diagnostics.AddError("The "+r.kind+" vanished", "It was created as "+created.ID+" and then not found.")
+		resp.Diagnostics.AddError("The "+noun(r.kind)+" vanished", "It was created as "+created.ID+" and then not found.")
 		return
 	}
 	resp.Diagnostics.Append(r.set(ctx, &resp.State, state)...)
@@ -471,7 +556,8 @@ func modelFromAPI(ch *apiChannel, prior *vitalModel) *vitalModel {
 	m.Schedule = types.StringValue(str(ch.Schedule))
 	m.ScheduleTZ = types.StringValue(str(ch.ScheduleTZ))
 	m.MaxDurationSecs = types.Int64Value(ch.MaxDurationSecs)
-	m.VitalPriority = types.StringValue(ch.VitalPriority)
+	m.HeartbeatPriority = types.StringValue(ch.VitalPriority)
+	m.VitalPriority = m.HeartbeatPriority
 	m.FailThreshold = types.Int64Value(ch.FailThreshold)
 	m.SmartEarlyWarn = types.BoolValue(ch.SmartEarlyWarn)
 	m.Host = types.StringValue(str(ch.Host))
@@ -487,7 +573,7 @@ func (r *channelResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 	state, err := r.read(ctx, prior.ID.ValueString(), nil, prior)
 	if err != nil {
-		resp.Diagnostics.AddError("Reading the "+r.kind+" failed", err.Error())
+		resp.Diagnostics.AddError("Reading the "+noun(r.kind)+" failed", err.Error())
 		return
 	}
 	if state == nil {
@@ -518,6 +604,9 @@ func (r *channelResource) Update(ctx context.Context, req resource.UpdateRequest
 			body[key] = v.ValueString()
 		}
 	}
+	if v := plan.HeartbeatPriority; !v.IsUnknown() && !v.IsNull() && !v.Equal(prior.HeartbeatPriority) {
+		body["vital_priority"] = v.ValueString()
+	}
 	if b := plan.SmartEarlyWarn; !b.IsUnknown() && !b.IsNull() && !b.Equal(prior.SmartEarlyWarn) {
 		body["smart_early_warn"] = b.ValueBool()
 	}
@@ -532,7 +621,7 @@ func (r *channelResource) Update(ctx context.Context, req resource.UpdateRequest
 	if len(body) > 0 {
 		updated, err := r.client.UpdateChannel(ctx, prior.ID.ValueString(), body)
 		if err != nil {
-			resp.Diagnostics.AddError("Updating the "+r.kind+" failed", err.Error())
+			resp.Diagnostics.AddError("Updating the "+noun(r.kind)+" failed", err.Error())
 			return
 		}
 		knownURL = updated.URL
@@ -540,11 +629,11 @@ func (r *channelResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	state, err := r.read(ctx, prior.ID.ValueString(), knownURL, prior)
 	if err != nil {
-		resp.Diagnostics.AddError("Reading the "+r.kind+" back failed", err.Error())
+		resp.Diagnostics.AddError("Reading the "+noun(r.kind)+" back failed", err.Error())
 		return
 	}
 	if state == nil {
-		resp.Diagnostics.AddError("The "+r.kind+" vanished", prior.ID.ValueString()+" was not found after the update.")
+		resp.Diagnostics.AddError("The "+noun(r.kind)+" vanished", prior.ID.ValueString()+" was not found after the update.")
 		return
 	}
 	resp.Diagnostics.Append(r.set(ctx, &resp.State, state)...)
@@ -557,7 +646,7 @@ func (r *channelResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 	if err := r.client.DeleteChannel(ctx, id.ValueString()); err != nil && !isNotFound(err) {
-		resp.Diagnostics.AddError("Deleting the "+r.kind+" failed", err.Error())
+		resp.Diagnostics.AddError("Deleting the "+noun(r.kind)+" failed", err.Error())
 	}
 }
 
@@ -565,19 +654,49 @@ func (r *channelResource) Delete(ctx context.Context, req resource.DeleteRequest
 func (r *channelResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	ch, err := r.client.GetChannel(ctx, req.ID)
 	if err != nil {
-		resp.Diagnostics.AddError("Finding the "+r.kind+" failed", err.Error())
+		resp.Diagnostics.AddError("Finding the "+noun(r.kind)+" failed", err.Error())
 		return
 	}
 	if ch.Kind != r.kind {
-		other := "tissue_mast_" + ch.Kind
+		other := "tissue_mast_" + noun(ch.Kind)
 		resp.Diagnostics.AddError("Wrong resource type",
-			fmt.Sprintf("%s (%s) is a %s. Import it as %s.", ch.Name, ch.ID, ch.Kind, other))
+			fmt.Sprintf("%s (%s) is a %s. Import it as %s.", ch.Name, ch.ID, noun(ch.Kind), other))
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), ch.ID)...)
 }
 
+// MoveState lets a moved block carry a tissue_mast_vital into
+// tissue_mast_heartbeat. The two share a schema, so the state goes across as
+// it is. A state written before heartbeat_priority existed has only
+// vital_priority, and the value is copied over.
+func (r *channelResource) MoveState(ctx context.Context) []resource.StateMover {
+	if r.typeName != "heartbeat" {
+		return nil
+	}
+	var source resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &source)
+	return []resource.StateMover{{
+		SourceSchema: &source.Schema,
+		StateMover: func(ctx context.Context, req resource.MoveStateRequest, resp *resource.MoveStateResponse) {
+			if req.SourceTypeName != "tissue_mast_vital" || req.SourceState == nil {
+				return
+			}
+			var m vitalModel
+			resp.Diagnostics.Append(req.SourceState.Get(ctx, &m)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			if m.HeartbeatPriority.IsNull() {
+				m.HeartbeatPriority = m.VitalPriority
+			}
+			resp.Diagnostics.Append(resp.TargetState.Set(ctx, &m)...)
+		},
+	}}
+}
+
 var (
+	_ resource.ResourceWithMoveState   = &channelResource{}
 	_ resource.ResourceWithImportState = &channelResource{}
 	_ resource.ResourceWithModifyPlan  = &channelResource{}
 	_ resource.ResourceWithConfigure   = &channelResource{}

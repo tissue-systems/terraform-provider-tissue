@@ -50,7 +50,7 @@ func (r *policyResource) Metadata(_ context.Context, req resource.MetadataReques
 func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "An escalation policy: who a page goes to, and who it goes to next while nobody " +
-			"acknowledges it. Attach it to a channel or vital with `policy_id`.",
+			"acknowledges it. Attach it to a channel or heartbeat with `policy_id`.",
 		Attributes: map[string]schema.Attribute{
 			"id": computedString("The policy id, `po_...`."),
 			"name": schema.StringAttribute{
