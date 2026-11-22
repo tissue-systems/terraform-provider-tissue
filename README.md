@@ -1,6 +1,6 @@
 # Terraform provider for Tissue
 
-Manages [Tissue Mast](https://tissue.systems/mast/) from Terraform or OpenTofu: channels,
+Manages [Tissue Mast](https://tissue.systems/mast/) from Terraform or OpenTofu: alert sources,
 heartbeats, probes, on-call rotations and their overrides, and escalation policies. The docs that go on
 the registry are in [docs/](docs/), generated from the schema and [examples/](examples/).
 
@@ -15,7 +15,7 @@ terraform {
 
 provider "tissue" {} # reads TISSUE_TOKEN
 
-resource "tissue_mast_channel" "deploys" {
+resource "tissue_mast_alert_source" "deploys" {
   name = "deploys"
 }
 ```
@@ -23,10 +23,18 @@ resource "tissue_mast_channel" "deploys" {
 The token comes from the dashboard's API tokens page and needs `mast:read` and `mast:write`.
 `TISSUE_SERVER` points the provider somewhere other than `https://api.tissue.systems`.
 
-`tissue_mast_vital` and its `vital_priority` argument are the deprecated names of
-`tissue_mast_heartbeat` and `heartbeat_priority`. Both still work, and
-[docs/resources/mast_vital.md](docs/resources/mast_vital.md) has the `moved` block that carries
-state from one to the other.
+Some names are deprecated and still work:
+
+- `tissue_mast_channel`, resource and data source, is `tissue_mast_alert_source`.
+  [docs/resources/mast_channel.md](docs/resources/mast_channel.md) has the `moved` block that
+  carries state across.
+- `tissue_mast_vital` and its `vital_priority` argument are `tissue_mast_heartbeat` and
+  `heartbeat_priority`, with the `moved` block in
+  [docs/resources/mast_vital.md](docs/resources/mast_vital.md).
+- `channel_id` on `tissue_mast_probe` is `alert_source_id`.
+
+The provider still calls the API's `/v1/mast/channels` routes and sends `channel_id`, the
+names every Mast server answers to.
 
 ## Developing
 

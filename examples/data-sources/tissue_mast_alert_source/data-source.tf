@@ -1,9 +1,9 @@
-data "tissue_mast_channel" "deploys" {
+data "tissue_mast_alert_source" "deploys" {
   name = "deploys"
 }
 
 # Hand the URL to whatever sends to it.
 resource "local_sensitive_file" "mast_url" {
   filename = "${path.module}/.mast-url"
-  content  = data.tissue_mast_channel.deploys.url
+  content  = data.tissue_mast_alert_source.deploys.url
 }

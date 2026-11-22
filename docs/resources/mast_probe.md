@@ -13,16 +13,16 @@ A probe: Mast checks a URL, port, certificate, DNS name, host or mail server fro
 ## Example Usage
 
 ```terraform
-# Checks the health endpoint every minute and pages the ops channel when it stops answering 200.
+# Checks the health endpoint every minute and pages the ops alert source when it stops answering 200.
 resource "tissue_mast_probe" "shop" {
-  name          = "shop"
-  target        = "https://shop.example.com/health"
-  interval_secs = 60
-  expect_status = 200
-  body_contains = "ok"
-  max_ms        = 2000
-  host          = "web1"
-  channel_id    = tissue_mast_channel.ops.id
+  name            = "shop"
+  target          = "https://shop.example.com/health"
+  interval_secs   = 60
+  expect_status   = 200
+  body_contains   = "ok"
+  max_ms          = 2000
+  host            = "web1"
+  alert_source_id = tissue_mast_alert_source.ops.id
 }
 
 # The MX records have to be exactly these two.
@@ -59,10 +59,11 @@ resource "tissue_mast_probe" "api" {
 
 ### Optional
 
+- `alert_source_id` (String) The alert source the probe's pages go to, `mc_...`.
 - `auth` (Attributes) `http`: credentials to send. Mast never gives the secret back, so Terraform can't see it change in the app, and after an import the first apply sends it again. Mast sends credentials only to a domain you have proven yours. (see [below for nested schema](#nestedatt--auth))
 - `body_contains` (String) Text the answer must contain: the response body for `http`, a record for `dns`, the server's reply for `smtp` and `tcp`.
 - `body_not_contains` (String) `http`: text the response body must not contain.
-- `channel_id` (String) The channel the probe's pages go to, `mc_...`.
+- `channel_id` (String, Deprecated) The deprecated name of `alert_source_id`.
 - `domain_expiry` (Boolean) Whether Mast watches the registration of the target's domain and sends a notice when it has 30, 14 and 7 days left. On unless you turn it off; `true` is refused on a plan without domain expiry notices and for a target with no registered domain, such as an IP address.
 - `expect` (String) `up` (the default), or `down` for a target that should not answer: the probe is fine while the check fails and pages when it succeeds.
 - `expect_header` (String) `http`: `Name: text`, a header the response must carry with `text` in its value. `Name:` alone only asks that it's there.

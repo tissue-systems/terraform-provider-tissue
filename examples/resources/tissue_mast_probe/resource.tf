@@ -1,13 +1,13 @@
-# Checks the health endpoint every minute and pages the ops channel when it stops answering 200.
+# Checks the health endpoint every minute and pages the ops alert source when it stops answering 200.
 resource "tissue_mast_probe" "shop" {
-  name          = "shop"
-  target        = "https://shop.example.com/health"
-  interval_secs = 60
-  expect_status = 200
-  body_contains = "ok"
-  max_ms        = 2000
-  host          = "web1"
-  channel_id    = tissue_mast_channel.ops.id
+  name            = "shop"
+  target          = "https://shop.example.com/health"
+  interval_secs   = 60
+  expect_status   = 200
+  body_contains   = "ok"
+  max_ms          = 2000
+  host            = "web1"
+  alert_source_id = tissue_mast_alert_source.ops.id
 }
 
 # The MX records have to be exactly these two.
