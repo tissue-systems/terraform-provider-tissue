@@ -203,9 +203,19 @@ func (d *rotationDataSource) Read(ctx context.Context, req datasource.ReadReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &out)...)
 }
 
-type channelDataSource struct{ clientHolder }
+// channelDataSource reads an alert source or a heartbeat by name. It is
+// registered as tissue_mast_alert_source and under the deprecated
+// tissue_mast_channel.
+type channelDataSource struct {
+	clientHolder
+	typeName string
+}
 
-func newChannelDataSource() datasource.DataSource { return &channelDataSource{} }
+func newAlertSourceDataSource() datasource.DataSource {
+	return &channelDataSource{typeName: "alert_source"}
+}
+
+func newChannelDataSource() datasource.DataSource { return &channelDataSource{typeName: "channel"} }
 
 type channelDataModel struct {
 	Name      types.String `tfsdk:"name"`
@@ -217,16 +227,23 @@ type channelDataModel struct {
 }
 
 func (d *channelDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_mast_channel"
+	resp.TypeName = req.ProviderTypeName + "_mast_" + d.typeName
 }
 
 func (d *channelDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	desc, deprecation := "An alert source or heartbeat by name, for wiring one made in the app into other configuration.", ""
+	if d.typeName == "channel" {
+		desc = "The deprecated name of the `tissue_mast_alert_source` data source. It takes the same arguments " +
+			"and reads the same thing."
+		deprecation = "Use the tissue_mast_alert_source data source. It takes the same arguments."
+	}
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "A channel or heartbeat by name, for wiring one made in the app into other configuration.",
+		MarkdownDescription: desc,
+		DeprecationMessage:  deprecation,
 		Attributes: map[string]schema.Attribute{
-			"name":      schema.StringAttribute{Required: true, MarkdownDescription: "The channel's name."},
-			"id":        schema.StringAttribute{Computed: true, MarkdownDescription: "The channel id."},
-			"kind":      schema.StringAttribute{Computed: true, MarkdownDescription: "The API's word for what it is: `channel`, or `vital` for a heartbeat."},
+			"name":      schema.StringAttribute{Required: true, MarkdownDescription: "The name of the alert source or heartbeat."},
+			"id":        schema.StringAttribute{Computed: true, MarkdownDescription: "Its id, `mc_...`."},
+			"kind":      schema.StringAttribute{Computed: true, MarkdownDescription: "The API's word for what it is: `channel` for an alert source, or `vital` for a heartbeat."},
 			"heartbeat": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether it is a heartbeat."},
 			"url":       schema.StringAttribute{Computed: true, Sensitive: true, MarkdownDescription: "The ingest URL, key included."},
 			"policy_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The policy it follows, or empty."},
@@ -242,7 +259,7 @@ func (d *channelDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	}
 	list, err := d.client.Channels(ctx)
 	if err != nil {
-		resp.Diagnostics.AddError("Listing channels failed", err.Error())
+		resp.Diagnostics.AddError("Listing alert sources failed", err.Error())
 		return
 	}
 	want := norm.NFC.String(strings.TrimSpace(cfg.Name.ValueString()))
@@ -265,8 +282,8 @@ func (d *channelDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		})...)
 		return
 	}
-	resp.Diagnostics.AddAttributeError(path.Root("name"), "No such channel",
-		fmt.Sprintf("There is no live channel or heartbeat named %q.", want))
+	resp.Diagnostics.AddAttributeError(path.Root("name"), "No such alert source",
+		fmt.Sprintf("There is no live alert source or heartbeat named %q.", want))
 }
 
 type probeDataSource struct{ clientHolder }
@@ -284,6 +301,7 @@ type probeDataModel struct {
 	Paused       types.Bool   `tfsdk:"paused"`
 	State        types.String `tfsdk:"state"`
 	ChannelID    types.String `tfsdk:"channel_id"`
+	AlertSource  types.String `tfsdk:"alert_source_id"`
 	PolicyID     types.String `tfsdk:"policy_id"`
 	Host         types.String `tfsdk:"host"`
 }
@@ -296,18 +314,19 @@ func (d *probeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A probe, by id or by name, for reading one someone made in the app.",
 		Attributes: map[string]schema.Attribute{
-			"id":            schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe id."},
-			"name":          schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe name. It has to be unique to look it up this way."},
-			"kind":          schema.StringAttribute{Computed: true, MarkdownDescription: "`http`, `tcp`, `tls`, `dns`, `icmp` or `smtp`."},
-			"target":        schema.StringAttribute{Computed: true},
-			"method":        schema.StringAttribute{Computed: true},
-			"interval_secs": schema.Int64Attribute{Computed: true},
-			"expect":        schema.StringAttribute{Computed: true, MarkdownDescription: "`up`, or `down` for a target that should not answer."},
-			"paused":        schema.BoolAttribute{Computed: true},
-			"state":         schema.StringAttribute{Computed: true, MarkdownDescription: "What the checks found as of the read, such as `down`; `pending` before the first check, `paused` while the probe is paused."},
-			"channel_id":    schema.StringAttribute{Computed: true, MarkdownDescription: "The channel its pages go to, if it has one."},
-			"policy_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "The policy its pages follow, if it has one."},
-			"host":          schema.StringAttribute{Computed: true, MarkdownDescription: "The machine the target runs on, if the probe names one."},
+			"id":              schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe id."},
+			"name":            schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe name. It has to be unique to look it up this way."},
+			"kind":            schema.StringAttribute{Computed: true, MarkdownDescription: "`http`, `tcp`, `tls`, `dns`, `icmp` or `smtp`."},
+			"target":          schema.StringAttribute{Computed: true},
+			"method":          schema.StringAttribute{Computed: true},
+			"interval_secs":   schema.Int64Attribute{Computed: true},
+			"expect":          schema.StringAttribute{Computed: true, MarkdownDescription: "`up`, or `down` for a target that should not answer."},
+			"paused":          schema.BoolAttribute{Computed: true},
+			"state":           schema.StringAttribute{Computed: true, MarkdownDescription: "What the checks found as of the read, such as `down`; `pending` before the first check, `paused` while the probe is paused."},
+			"alert_source_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The alert source its pages go to, if it has one."},
+			"channel_id":      schema.StringAttribute{Computed: true, MarkdownDescription: "The same as `alert_source_id`, under the API's older name."},
+			"policy_id":       schema.StringAttribute{Computed: true, MarkdownDescription: "The policy its pages follow, if it has one."},
+			"host":            schema.StringAttribute{Computed: true, MarkdownDescription: "The machine the target runs on, if the probe names one."},
 		},
 	}
 }
@@ -346,6 +365,7 @@ func (d *probeDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		Paused:       types.BoolValue(pr.Paused),
 		State:        types.StringValue(pr.State),
 		ChannelID:    text(pr.ChannelID),
+		AlertSource:  text(pr.ChannelID),
 		PolicyID:     text(pr.PolicyID),
 		Host:         text(pr.Host),
 	})...)

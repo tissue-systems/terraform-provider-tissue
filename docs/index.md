@@ -1,12 +1,12 @@
 ---
 page_title: "Provider: Tissue"
 description: |-
-  Manage Tissue Mast channels, heartbeats, probes, rotations, overrides and escalation policies.
+  Manage Tissue Mast alert sources, heartbeats, probes, rotations, overrides and escalation policies.
 ---
 
 # Tissue Provider
 
-The Tissue provider manages [Tissue Mast](https://tissue.systems/mast/): the channels, heartbeats and
+The Tissue provider manages [Tissue Mast](https://tissue.systems/mast/): the alert sources, heartbeats and
 probes that page your team's phones, the rotations that decide who is on call, and the escalation
 policies that decide who gets paged next.
 
@@ -14,8 +14,8 @@ Authenticate with an API token from the dashboard's API tokens page at
 [dashboard.tissue.systems](https://dashboard.tissue.systems/tokens). It needs the `mast:read`
 and `mast:write` scopes. Put it in `TISSUE_TOKEN` rather than in the configuration.
 
-A few settings belong to the phone, not to the API. A channel's `max_priority` can be raised to
-`page` only in the Mast app, on the owner's phone, so the provider creates channels at `loud` at
+A few settings belong to the phone, not to the API. An alert source's `max_priority` can be raised
+to `page` only in the Mast app, on the owner's phone, so the provider creates alert sources at `loud` at
 most and reports the value the app holds. Arguments you leave out follow whatever the app has,
 so people can keep changing quiet hours or sounds there without Terraform undoing it.
 

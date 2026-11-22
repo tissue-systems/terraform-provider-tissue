@@ -485,7 +485,7 @@ func (f *fakeMast) createChannel(body map[string]json.RawMessage) (int, any, *ht
 		return 0, nil, bad("%s", p)
 	}
 	if f.resolveChannel(ch.Name) != nil {
-		return 0, nil, &httpError{status: 409, code: "conflict", msg: fmt.Sprintf("A channel named %q already exists.", ch.Name)}
+		return 0, nil, &httpError{status: 409, code: "conflict", msg: fmt.Sprintf("An alert source named %q already exists.", ch.Name)}
 	}
 	ch.CreatedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	ch.DefaultPriority, ch.MaxPriority, ch.VitalPriority = "normal", "loud", "loud"
@@ -531,7 +531,7 @@ func (f *fakeMast) updateChannel(ch *fakeChannel, body map[string]json.RawMessag
 			return 0, nil, bad("%s", p)
 		}
 		if other := f.resolveChannel(n); other != nil && other.ID != ch.ID {
-			return 0, nil, &httpError{status: 409, code: "conflict", msg: fmt.Sprintf("A channel named %q already exists.", n)}
+			return 0, nil, &httpError{status: 409, code: "conflict", msg: fmt.Sprintf("An alert source named %q already exists.", n)}
 		}
 		next.Name = n
 	}

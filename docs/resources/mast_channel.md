@@ -3,32 +3,26 @@
 page_title: "tissue_mast_channel Resource - tissue"
 subcategory: ""
 description: |-
-  A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. A heartbeat, which the API lists as a channel with kind = "vital", is managed with tissue_mast_heartbeat.
+  The deprecated name of tissue_mast_alert_source. It takes the same arguments and manages the same alert source. To move a resource over, change its type to tissue_mast_alert_source and add a moved block from the old address to the new one, which needs Terraform 1.8 or later. Without moved between resource types, run terraform state rm on the old address and terraform import on the new one. Either way the alert source keeps its id and its URL.
 ---
 
 # tissue_mast_channel (Resource)
 
-A Mast channel: a URL that turns what is sent to it into notifications on the phones of the account. A heartbeat, which the API lists as a channel with `kind = "vital"`, is managed with `tissue_mast_heartbeat`.
+The deprecated name of `tissue_mast_alert_source`. It takes the same arguments and manages the same alert source. To move a resource over, change its type to `tissue_mast_alert_source` and add a `moved` block from the old address to the new one, which needs Terraform 1.8 or later. Without `moved` between resource types, run `terraform state rm` on the old address and `terraform import` on the new one. Either way the alert source keeps its id and its URL.
 
 ## Example Usage
 
 ```terraform
-resource "tissue_mast_channel" "deploys" {
-  name             = "deploys"
-  default_priority = "loud"
-  sound            = "chirp"
-
-  # Quiet from 22:00 to 07:00 Berlin time.
-  quiet_start = 1320
-  quiet_end   = 420
-  quiet_tz    = "Europe/Berlin"
-
-  policy_id = tissue_mast_policy.default.id
+# Moving a tissue_mast_channel to tissue_mast_alert_source: change the type,
+# keep the arguments, and tell Terraform where the state went.
+moved {
+  from = tissue_mast_channel.deploys
+  to   = tissue_mast_alert_source.deploys
 }
 
-output "deploys_url" {
-  value     = tissue_mast_channel.deploys.url
-  sensitive = true
+resource "tissue_mast_alert_source" "deploys" {
+  name             = "deploys"
+  default_priority = "loud"
 }
 ```
 
@@ -42,14 +36,14 @@ output "deploys_url" {
 ### Optional
 
 - `ack_timeout_min` (Number) Minutes an acknowledged incident stays quiet before paging again. `0` never re-pages.
-- `archived` (Boolean) Whether the channel is archived. An archived channel takes no sends and its URL answers 404 until it's restored. Leave it unset to follow the app, where people archive and restore; set it to `false` to restore one archived there. Restoring counts against the plan's channel limit again.
+- `archived` (Boolean) Whether the alert source is archived. An archived alert source takes no sends and its URL answers 404 until it's restored. Leave it unset to follow the app, where people archive and restore; set it to `false` to restore one archived there. Restoring counts against the plan's limit again.
 - `canary_url` (String) An http or https URL Mast fetches to check the sender is still alive. Empty turns it off.
 - `dedupe_window_secs` (Number) Repeats of one message inside this many seconds fold into one. Default 300.
 - `default_priority` (String) Priority of a send that doesn't name one: `quiet`, `normal`, `loud` or `page`. The server's default is `normal`.
 - `escalate_after_secs` (Number) Seconds before an unacknowledged page escalates. `0` turns it off.
 - `expire_secs` (Number) How long an unacknowledged page keeps repeating. Default 3600.
-- `max_priority` (String) The highest priority a send can ask for. A new channel can start at `quiet`, `normal` or `loud` (the default). Raising it to `page` is done in the Mast app, on the owner's phone, and after create the value can only be changed there. Leave it unset to follow the app, or set it to what the app shows.
-- `policy_id` (String) The escalation policy pages on this channel follow, `po_...`. Set it to `""` to detach one; leaving the argument out keeps whatever the app has.
+- `max_priority` (String) The highest priority a send can ask for. A new alert source can start at `quiet`, `normal` or `loud` (the default). Raising it to `page` is done in the Mast app, on the owner's phone, and after create the value can only be changed there. Leave it unset to follow the app, or set it to what the app shows.
+- `policy_id` (String) The escalation policy pages on this alert source follow, `po_...`. Set it to `""` to detach one; leaving the argument out keeps whatever the app has.
 - `quiet_end` (Number) End of the quiet window, in minutes past midnight, or `-1` for none.
 - `quiet_start` (Number) Start of a daily quiet window, in minutes past midnight, or `-1` for none.
 - `quiet_tz` (String) Time zone the quiet window is read in: an IANA name such as `Europe/Berlin`, or an offset such as `+0530`. Empty is UTC.
@@ -60,18 +54,6 @@ output "deploys_url" {
 
 ### Read-Only
 
-- `created_at` (String) When the channel was made.
-- `id` (String) The channel id, `mc_...`.
-- `url` (String, Sensitive) The ingest URL. It carries the key, so anyone holding it can send to this channel.
-
-## Import
-
-Import is supported using the following syntax:
-
-The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
-
-```shell
-# By name or by id.
-terraform import tissue_mast_channel.deploys deploys
-terraform import tissue_mast_channel.deploys mc_3f9a0c1e2b7d4a55
-```
+- `created_at` (String) When the alert source was made.
+- `id` (String) The alert source id, `mc_...`.
+- `url` (String, Sensitive) The ingest URL. It carries the key, so anyone holding it can send to this alert source.

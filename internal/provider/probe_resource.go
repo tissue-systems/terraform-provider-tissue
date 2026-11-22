@@ -54,6 +54,7 @@ type probeModel struct {
 	RequestContentType types.String    `tfsdk:"request_content_type"`
 	Auth               *probeAuthModel `tfsdk:"auth"`
 	MaxMs              types.Int64     `tfsdk:"max_ms"`
+	AlertSourceID      types.String    `tfsdk:"alert_source_id"`
 	ChannelID          types.String    `tfsdk:"channel_id"`
 	PolicyID           types.String    `tfsdk:"policy_id"`
 	Host               types.String    `tfsdk:"host"`
@@ -70,7 +71,8 @@ type probeAuthModel struct {
 }
 
 // The API's name for each field that is a string, a number or a boolean.
-// Sending "" or 0 takes a value away again.
+// Sending "" or 0 takes a value away again. alert_source_id isn't here: the
+// plan holds it equal to channel_id, and the request carries channel_id.
 func (m *probeModel) fields() map[string]attr.Value {
 	return map[string]attr.Value{
 		"name":                 m.Name,
@@ -269,12 +271,25 @@ func (r *probeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Optional:   true,
 				Validators: []validator.Int64{int64validator.Between(1, 60000)},
 			},
-			"channel_id": schema.StringAttribute{
-				MarkdownDescription: "The channel the probe's pages go to, `mc_...`.",
+			"alert_source_id": schema.StringAttribute{
+				MarkdownDescription: "The alert source the probe's pages go to, `mc_...`.",
 				Optional:            true,
+				Computed:            true,
 				Validators: []validator.String{
-					stringvalidator.RegexMatches(regexp.MustCompile(`^mc_`), "must be a channel id, mc_..."),
+					stringvalidator.RegexMatches(regexp.MustCompile(`^mc_`), "must be an alert source id, mc_..."),
+					stringvalidator.ConflictsWith(path.MatchRoot("channel_id")),
 				},
+				PlanModifiers: []planmodifier.String{mirrors{other: "channel_id"}},
+			},
+			"channel_id": schema.StringAttribute{
+				MarkdownDescription: "The deprecated name of `alert_source_id`.",
+				DeprecationMessage:  "Use alert_source_id. It takes the same value.",
+				Optional:            true,
+				Computed:            true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(regexp.MustCompile(`^mc_`), "must be an alert source id, mc_..."),
+				},
+				PlanModifiers: []planmodifier.String{mirrors{other: "alert_source_id"}},
 			},
 			"policy_id": schema.StringAttribute{
 				MarkdownDescription: "The escalation policy the probe's pages follow, `po_...`.",
@@ -308,6 +323,26 @@ func (r *probeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"created_at": computedString("When the probe was made."),
 		},
 	}
+}
+
+// mirrors keeps an attribute equal to the other name for the same setting.
+// Whichever of the two the configuration sets decides both, and with neither
+// set both are null, which takes the setting away.
+type mirrors struct{ other string }
+
+func (m mirrors) Description(context.Context) string {
+	return "holds the same value as " + m.other
+}
+
+func (m mirrors) MarkdownDescription(ctx context.Context) string { return m.Description(ctx) }
+
+func (m mirrors) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+	var other types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(m.other), &other)...)
+	resp.PlanValue = other
 }
 
 func (r *probeResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -549,6 +584,7 @@ func probeFromAPI(pr *apiProbe, from *probeModel) *probeModel {
 		RequestBody:        text(pr.RequestBody),
 		RequestContentType: text(pr.RequestContentType),
 		MaxMs:              types.Int64PointerValue(pr.MaxMs),
+		AlertSourceID:      text(pr.ChannelID),
 		ChannelID:          text(pr.ChannelID),
 		PolicyID:           text(pr.PolicyID),
 		Host:               text(pr.Host),

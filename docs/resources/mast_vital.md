@@ -38,7 +38,7 @@ resource "tissue_mast_heartbeat" "backup" {
 ### Optional
 
 - `ack_timeout_min` (Number) Minutes an acknowledged incident stays quiet before paging again. `0` never re-pages.
-- `archived` (Boolean) Whether the heartbeat is archived. An archived heartbeat takes no sends and its URL answers 404 until it's restored. Leave it unset to follow the app, where people archive and restore; set it to `false` to restore one archived there. Restoring counts against the plan's channel limit again.
+- `archived` (Boolean) Whether the heartbeat is archived. An archived heartbeat takes no sends and its URL answers 404 until it's restored. Leave it unset to follow the app, where people archive and restore; set it to `false` to restore one archived there. Restoring counts against the plan's limit again.
 - `canary_url` (String) An http or https URL Mast fetches to check the sender is still alive. Empty turns it off.
 - `dedupe_window_secs` (Number) Repeats of one message inside this many seconds fold into one. Default 300.
 - `default_priority` (String) Priority of a send that doesn't name one: `quiet`, `normal`, `loud` or `page`. The server's default is `normal`.

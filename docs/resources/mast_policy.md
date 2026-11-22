@@ -3,12 +3,12 @@
 page_title: "tissue_mast_policy Resource - tissue"
 subcategory: ""
 description: |-
-  An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to a channel or heartbeat with policy_id.
+  An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to an alert source or heartbeat with policy_id.
 ---
 
 # tissue_mast_policy (Resource)
 
-An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to a channel or heartbeat with `policy_id`.
+An escalation policy: who a page goes to, and who it goes to next while nobody acknowledges it. Attach it to an alert source or heartbeat with `policy_id`.
 
 ## Example Usage
 
@@ -49,12 +49,12 @@ resource "tissue_mast_policy" "default" {
 Required:
 
 - `priority` (String) `page`, `loud` or `quiet`.
-- `target` (String) Who the step pages: `oncall` (whoever holds `rotation_id`), `next` (whoever has the rotation's next shift), `everyone`, `user` or `channel`.
+- `target` (String) Who the step pages: `oncall` (whoever holds `rotation_id`), `next` (whoever has the rotation's next shift), `everyone`, `user` or `channel` (an alert source).
 
 Optional:
 
 - `after_secs` (Number) Seconds after the step before, up to a week. Ignored on the first step.
-- `channel_id` (String) The channel a `channel` step sends to, `mc_...`.
+- `channel_id` (String) The alert source a `channel` step sends to, `mc_...`.
 - `rotation_id` (String) The rotation an `oncall` or `next` step reads. Without one the step pages everyone.
 - `user_id` (String) The person a `user` step pages.
 

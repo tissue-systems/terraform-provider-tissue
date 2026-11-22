@@ -32,7 +32,8 @@ output "shop_probe_target" {
 
 ### Read-Only
 
-- `channel_id` (String) The channel its pages go to, if it has one.
+- `alert_source_id` (String) The alert source its pages go to, if it has one.
+- `channel_id` (String) The same as `alert_source_id`, under the API's older name.
 - `expect` (String) `up`, or `down` for a target that should not answer.
 - `host` (String) The machine the target runs on, if the probe names one.
 - `interval_secs` (Number)
