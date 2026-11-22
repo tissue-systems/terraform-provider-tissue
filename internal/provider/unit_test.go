@@ -180,3 +180,84 @@ func TestNilClientIsAnError(t *testing.T) {
 	}
 	c.lockRotation("sc_1")()
 }
+
+func TestDuplicateProbeNamesTheOther(t *testing.T) {
+	f := newFakeMast(t)
+	c := NewClient(f.srv.URL, fullToken, "test")
+	ctx := context.Background()
+
+	first, err := c.CreateProbe(ctx, map[string]any{"target": "https://shop.acme.test/health"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.CreateProbe(ctx, map[string]any{"target": "https://shop.acme.test/health", "name": "again"})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 409 || apiErr.Code != "duplicate_probe" {
+		t.Fatalf("want a 409 duplicate_probe, got %v", err)
+	}
+	if apiErr.ExistingID != first.ID {
+		t.Errorf("the error names %q, want %q", apiErr.ExistingID, first.ID)
+	}
+	if got := duplicateProbe(err); got != first.ID {
+		t.Errorf("duplicateProbe gave %q, want %q", got, first.ID)
+	}
+	if got := duplicateProbe(&APIError{Status: 409, Code: "conflict", ExistingID: "pr_x"}); got != "" {
+		t.Errorf("another 409 was read as a duplicate probe: %q", got)
+	}
+}
+
+func TestFindProbe(t *testing.T) {
+	f := newFakeMast(t)
+	c := NewClient(f.srv.URL, fullToken, "test")
+	ctx := context.Background()
+
+	shop, err := c.CreateProbe(ctx, map[string]any{"target": "https://shop.acme.test/health", "name": "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/a", "/b"} {
+		if _, err := c.CreateProbe(ctx, map[string]any{"target": "https://api.acme.test" + path, "name": "api"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, ref := range []string{"shop", shop.ID} {
+		if got, err := c.FindProbe(ctx, ref); err != nil || got.ID != shop.ID {
+			t.Errorf("FindProbe(%q) = %v, %v", ref, got, err)
+		}
+	}
+	if _, err := c.FindProbe(ctx, "nope"); err == nil || !strings.Contains(err.Error(), `no probe named "nope"`) {
+		t.Errorf("a missing name gave %v", err)
+	}
+	if _, err := c.FindProbe(ctx, "api"); err == nil || !strings.Contains(err.Error(), "2 probes are named") {
+		t.Errorf("a name two probes share gave %v", err)
+	}
+}
+
+func TestProbeBodyRefusesUnknownFields(t *testing.T) {
+	f := newFakeMast(t)
+	c := NewClient(f.srv.URL, fullToken, "test")
+
+	_, err := c.CreateProbe(context.Background(), map[string]any{"target": "https://shop.acme.test", "state": "up"})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Fatalf("want a 400, got %v", err)
+	}
+}
+
+func TestProbeHeaderProblem(t *testing.T) {
+	for line, want := range map[string]string{
+		"Accept: application/json": "",
+		"X-Empty:":                 "",
+		"Accept:application/json":  `stored as "Accept: application/json"`,
+		" Accept: text/html":       `stored as "Accept: text/html"`,
+		"Accept":                   "not a",
+		": value":                  "not a",
+		"A: b\r\nC: d":             "more than one line",
+	} {
+		got := probeHeaderProblem(line)
+		if (want == "") != (got == "") || !strings.Contains(got, want) {
+			t.Errorf("%q: got %q, want %q", line, got, want)
+		}
+	}
+}

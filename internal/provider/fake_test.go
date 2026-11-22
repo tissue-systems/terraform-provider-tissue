@@ -33,6 +33,7 @@ type fakeMast struct {
 	channels  map[string]*fakeChannel
 	schedules map[string]*apiSchedule
 	policies  map[string]*fakePolicy
+	probes    map[string]*fakeProbe
 	people    []apiPerson
 	order     []string // creation order of channels, for /state
 
@@ -75,6 +76,7 @@ func newFakeMast(t *testing.T) *fakeMast {
 		channels:  map[string]*fakeChannel{},
 		schedules: map[string]*apiSchedule{},
 		policies:  map[string]*fakePolicy{},
+		probes:    map[string]*fakeProbe{},
 		people: []apiPerson{
 			{UserID: "usr_ana", Email: "ana@example.com", Role: "owner", Phones: 2},
 			{UserID: "usr_ben", Email: "Ben@Example.com", Role: "developer", Phones: 1},
@@ -96,14 +98,17 @@ type httpError struct {
 	status int
 	code   string
 	msg    string
+	// Sits beside code and message in the error object, as the server's
+	// details do.
+	details map[string]string
 }
 
 func bad(format string, args ...any) *httpError {
-	return &httpError{http.StatusBadRequest, "bad_request", fmt.Sprintf(format, args...)}
+	return &httpError{status: http.StatusBadRequest, code: "bad_request", msg: fmt.Sprintf(format, args...)}
 }
 
 func notFound(format string, args ...any) *httpError {
-	return &httpError{http.StatusNotFound, "not_found", fmt.Sprintf(format, args...)}
+	return &httpError{status: http.StatusNotFound, code: "not_found", msg: fmt.Sprintf(format, args...)}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -135,7 +140,11 @@ func (f *fakeMast) serve(w http.ResponseWriter, r *http.Request) {
 
 	status, out, herr := f.route(r)
 	if herr != nil {
-		writeJSON(w, herr.status, map[string]any{"error": map[string]string{"code": herr.code, "message": herr.msg}})
+		body := map[string]string{"code": herr.code, "message": herr.msg}
+		for k, v := range herr.details {
+			body[k] = v
+		}
+		writeJSON(w, herr.status, map[string]any{"error": body})
 		return
 	}
 	if status == http.StatusNoContent {
@@ -256,6 +265,39 @@ func (f *fakeMast) route(r *http.Request) (int, any, *httpError) {
 					ch.policy = ""
 				}
 			}
+			return 204, nil, nil
+		}
+	case parts[0] == "probes" && len(parts) == 1 && m == "GET":
+		items := []any{}
+		for _, pr := range f.probes {
+			items = append(items, f.renderProbe(pr))
+		}
+		return 200, map[string]any{"items": items}, nil
+	case parts[0] == "probes" && len(parts) == 1 && m == "POST":
+		pr := &fakeProbe{ID: newID("pr_", 16), IntervalSecs: 300, DomainExpiry: true,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		if herr := f.applyProbe(pr, body); herr != nil {
+			return 0, nil, herr
+		}
+		f.probes[pr.ID] = pr
+		return 201, f.renderProbe(pr), nil
+	case parts[0] == "probes" && len(parts) == 2:
+		pr, ok := f.probes[parts[1]]
+		if !ok {
+			return 0, nil, notFound("No probe %q.", parts[1])
+		}
+		switch m {
+		case "GET":
+			return 200, f.renderProbe(pr), nil
+		case "PATCH":
+			next := *pr
+			if herr := f.applyProbe(&next, body); herr != nil {
+				return 0, nil, herr
+			}
+			*pr = next
+			return 200, f.renderProbe(pr), nil
+		case "DELETE":
+			delete(f.probes, pr.ID)
 			return 204, nil, nil
 		}
 	}
@@ -443,7 +485,7 @@ func (f *fakeMast) createChannel(body map[string]json.RawMessage) (int, any, *ht
 		return 0, nil, bad("%s", p)
 	}
 	if f.resolveChannel(ch.Name) != nil {
-		return 0, nil, &httpError{409, "conflict", fmt.Sprintf("A channel named %q already exists.", ch.Name)}
+		return 0, nil, &httpError{status: 409, code: "conflict", msg: fmt.Sprintf("A channel named %q already exists.", ch.Name)}
 	}
 	ch.CreatedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	ch.DefaultPriority, ch.MaxPriority, ch.VitalPriority = "normal", "loud", "loud"
@@ -489,7 +531,7 @@ func (f *fakeMast) updateChannel(ch *fakeChannel, body map[string]json.RawMessag
 			return 0, nil, bad("%s", p)
 		}
 		if other := f.resolveChannel(n); other != nil && other.ID != ch.ID {
-			return 0, nil, &httpError{409, "conflict", fmt.Sprintf("A channel named %q already exists.", n)}
+			return 0, nil, &httpError{status: 409, code: "conflict", msg: fmt.Sprintf("A channel named %q already exists.", n)}
 		}
 		next.Name = n
 	}
@@ -792,6 +834,302 @@ func (f *fakeMast) renderPolicy(po *fakePolicy) map[string]any {
 		"capped_at": nil, "used_by": map[string]any{"channels": channels, "probes": []string{}},
 		"created_at": po.CreatedAt,
 	}
+}
+
+// fakeProbe is a probe row: empty strings and zeros are what the API shows
+// as null.
+type fakeProbe struct {
+	ID, Name, Kind, Target, Method string
+	ExpectStatus, MaxMs            int64
+	IntervalSecs                   int64
+	// body_contains, json_path and the other text fields, by their API name.
+	Text         map[string]string
+	IgnoreCase   bool
+	Headers      []string
+	AuthType     string
+	AuthUser     string
+	AuthSecret   string
+	ChannelID    string
+	PolicyID     string
+	Paused       bool
+	Down         bool
+	DomainExpiry bool
+	CreatedAt    string
+}
+
+var probeTextFields = []string{"body_contains", "body_not_contains", "json_path", "expect_value", "resolver",
+	"expect_statuses", "expect_header", "send", "expect_set", "request_body", "request_content_type", "host"}
+
+// Everything a probe body may carry. The server refuses any other key.
+var probeBodyFields = append([]string{"name", "kind", "target", "method", "expect_status", "ignore_case",
+	"request_headers", "auth", "max_ms", "interval_secs", "channel_id", "policy_id", "paused", "domain_expiry",
+	"expect"}, probeTextFields...)
+
+// A probe's target with a registered domain to watch; an IP address has none.
+func hasDomain(target string) bool {
+	host := strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://")
+	host, _, _ = strings.Cut(host, "/")
+	host, _, _ = strings.Cut(host, ":")
+	return strings.Trim(host, "0123456789.") != ""
+}
+
+func origin(target string) string {
+	scheme, rest, _ := strings.Cut(target, "://")
+	host, _, _ := strings.Cut(rest, "/")
+	return scheme + "://" + host
+}
+
+// fingerprint mirrors probe::fingerprint: what the probe asks and how it
+// judges the answer. A probe that sends a body or credentials has none.
+func (pr *fakeProbe) fingerprint() string {
+	if pr.Text["request_body"] != "" || pr.AuthType != "" {
+		return ""
+	}
+	parts := []string{pr.Kind, pr.Target, pr.Method, fmt.Sprint(pr.ExpectStatus, pr.IgnoreCase, pr.Down), strings.Join(pr.Headers, "\n")}
+	for _, name := range probeTextFields {
+		if name != "host" {
+			parts = append(parts, pr.Text[name])
+		}
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func (f *fakeMast) applyProbe(pr *fakeProbe, body map[string]json.RawMessage) *httpError {
+	for key := range body {
+		if !slices.Contains(probeBodyFields, key) {
+			return bad("Unknown field %q.", key)
+		}
+	}
+	before, movedFrom := pr.fingerprint(), pr.Target
+	text := map[string]string{}
+	for k, v := range pr.Text {
+		text[k] = v
+	}
+	pr.Text = text
+
+	if v, _ := decode[string](body, "kind"); v != nil {
+		if !slices.Contains(probeKinds, *v) {
+			return bad("kind must be one of %s.", strings.Join(probeKinds, ", "))
+		}
+		pr.Kind = *v
+	}
+	if pr.Kind == "" {
+		pr.Kind = "http"
+	}
+	if v, _ := decode[string](body, "target"); v != nil {
+		pr.Target = strings.TrimSpace(*v)
+	}
+	if pr.Target == "" {
+		return bad("target is required.")
+	}
+	if raw, ok := body["method"]; ok {
+		method := ""
+		if string(raw) != "null" {
+			_ = json.Unmarshal(raw, &method)
+		}
+		method = strings.ToUpper(strings.TrimSpace(method))
+		allowed := map[string][]string{"http": probeHTTPMethods, "dns": probeDNSTypes, "smtp": probeSMTPSteps}[pr.Kind]
+		if method != "" && !slices.Contains(allowed, method) {
+			return bad("method does not apply to %s probes.", pr.Kind)
+		}
+		pr.Method = method
+	}
+	switch {
+	case pr.Kind == "http" && pr.Method == "":
+		pr.Method = "GET"
+	case pr.Kind == "dns" && pr.Method == "":
+		pr.Method = "A"
+	}
+	if v, _ := decode[int64](body, "expect_status"); v != nil {
+		pr.ExpectStatus = *v
+	}
+	for _, name := range probeTextFields {
+		raw, ok := body[name]
+		if !ok {
+			continue
+		}
+		v := ""
+		if string(raw) != "null" {
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return bad("Invalid JSON body: %s: %v", name, err)
+			}
+		}
+		if name != "body_contains" && name != "body_not_contains" && name != "send" && name != "request_body" {
+			v = strings.TrimSpace(v)
+		}
+		pr.Text[name] = v
+	}
+	if _, ok := body["request_body"]; ok && pr.Text["request_body"] == "" {
+		if _, typed := body["request_content_type"]; !typed {
+			pr.Text["request_content_type"] = ""
+		}
+	}
+	if pr.Text["request_body"] != "" {
+		if !slices.Contains([]string{"POST", "PUT", "PATCH"}, pr.Method) {
+			return bad("request_body needs the method POST, PUT or PATCH.")
+		}
+		if pr.Text["request_content_type"] == "" {
+			pr.Text["request_content_type"] = "application/json"
+		}
+	}
+	if v, _ := decode[bool](body, "ignore_case"); v != nil {
+		pr.IgnoreCase = *v
+	}
+	if raw, ok := body["request_headers"]; ok {
+		var lines []string
+		if string(raw) != "null" {
+			_ = json.Unmarshal(raw, &lines)
+		}
+		pr.Headers = nil
+		for _, l := range lines {
+			l = strings.TrimSpace(l)
+			if name, value, ok := strings.Cut(l, ":"); ok {
+				l = strings.TrimRight(strings.TrimSpace(name)+": "+strings.TrimSpace(value), " ")
+			}
+			if l != "" {
+				pr.Headers = append(pr.Headers, l)
+			}
+		}
+	}
+	if raw, ok := body["auth"]; ok {
+		if string(raw) == "null" {
+			pr.AuthType, pr.AuthUser, pr.AuthSecret = "", "", ""
+		} else {
+			var auth map[string]string
+			if err := json.Unmarshal(raw, &auth); err != nil {
+				return bad("auth is an object or null.")
+			}
+			secret := auth["token"]
+			if auth["type"] == "basic" {
+				secret = auth["password"]
+			}
+			keep := pr.AuthSecret != "" && pr.AuthType == auth["type"] && pr.AuthUser == auth["username"]
+			if secret == "" && !keep {
+				return bad("%s auth needs its secret.", auth["type"])
+			}
+			pr.AuthType, pr.AuthUser = auth["type"], auth["username"]
+			if secret != "" {
+				pr.AuthSecret = secret
+			}
+		}
+	} else if pr.AuthSecret != "" && origin(movedFrom) != origin(pr.Target) {
+		return bad("The target moved to another site. Send auth again to use the credentials there.")
+	}
+	if v, _ := decode[int64](body, "max_ms"); v != nil {
+		if *v < 0 || *v > 60000 {
+			return bad("max_ms is 0 to 60000.")
+		}
+		pr.MaxMs = *v
+	}
+	if v, _ := decode[int64](body, "interval_secs"); v != nil {
+		pr.IntervalSecs = *v
+	}
+	if pr.IntervalSecs < 30 || pr.IntervalSecs > 86400 {
+		return bad("interval_secs is 30 to 86400.")
+	}
+	if v, _ := decode[string](body, "name"); v != nil {
+		name, herr := cleanName(*v)
+		if herr != nil {
+			return herr
+		}
+		pr.Name = name
+	}
+	if pr.Name == "" {
+		host := strings.TrimPrefix(strings.TrimPrefix(pr.Target, "https://"), "http://")
+		host, _, _ = strings.Cut(host, "/")
+		pr.Name, _, _ = strings.Cut(host, ":")
+	}
+	if v, _ := decode[bool](body, "paused"); v != nil {
+		pr.Paused = *v
+	}
+	if raw, ok := body["expect"]; ok {
+		v := ""
+		if string(raw) != "null" {
+			_ = json.Unmarshal(raw, &v)
+		}
+		switch v {
+		case "", "up":
+			pr.Down = false
+		case "down":
+			pr.Down = true
+		default:
+			return bad("expect is \"up\" or \"down\".")
+		}
+	}
+
+	if fp := pr.fingerprint(); fp != "" && fp != before {
+		for _, other := range f.probes {
+			if other.ID != pr.ID && other.fingerprint() == fp {
+				return &httpError{status: http.StatusConflict, code: "duplicate_probe",
+					msg:     fmt.Sprintf("You already have a probe that checks exactly this (%s). Change that one instead.", other.ID),
+					details: map[string]string{"existing_id": other.ID}}
+			}
+		}
+	}
+	if v, _ := decode[string](body, "channel_id"); v != nil {
+		pr.ChannelID = ""
+		if id := strings.TrimSpace(*v); id != "" {
+			ch := f.resolveChannel(id)
+			if ch == nil {
+				return notFound("No channel %q.", id)
+			}
+			pr.ChannelID = ch.ID
+		}
+	}
+	if v, _ := decode[string](body, "policy_id"); v != nil {
+		pr.PolicyID = strings.TrimSpace(*v)
+		if _, ok := f.policies[pr.PolicyID]; !ok && pr.PolicyID != "" {
+			return notFound("No policy %q.", pr.PolicyID)
+		}
+	}
+	if v, _ := decode[bool](body, "domain_expiry"); v != nil {
+		if *v && !hasDomain(pr.Target) {
+			return bad("domain_expiry needs a target with a registered domain name.")
+		}
+		pr.DomainExpiry = *v
+	}
+	return nil
+}
+
+func (f *fakeMast) renderProbe(pr *fakeProbe) map[string]any {
+	state := "pending"
+	if pr.Paused {
+		state = "paused"
+	}
+	expect := "up"
+	if pr.Down {
+		expect = "down"
+	}
+	out := map[string]any{
+		"id": pr.ID, "name": pr.Name, "kind": pr.Kind, "target": pr.Target, "method": pr.Method,
+		"expect_status": nil, "max_ms": nil, "ignore_case": pr.IgnoreCase, "request_headers": nil, "auth": nil,
+		"interval_secs": pr.IntervalSecs, "channel_id": nullable(pr.ChannelID), "policy_id": nullable(pr.PolicyID),
+		"paused": pr.Paused, "paused_reason": nil, "state": state, "last_checked_at": nil, "last_ms": nil,
+		"last_detail": nil, "last_cause": nil, "cert_expires_at": nil, "vantage": nil, "expect": expect,
+		"domain_expiry": nil, "created_at": pr.CreatedAt,
+	}
+	for _, name := range probeTextFields {
+		out[name] = nullable(pr.Text[name])
+	}
+	if pr.ExpectStatus != 0 {
+		out["expect_status"] = pr.ExpectStatus
+	}
+	if pr.MaxMs != 0 {
+		out["max_ms"] = pr.MaxMs
+	}
+	if len(pr.Headers) > 0 {
+		out["request_headers"] = pr.Headers
+	}
+	switch pr.AuthType {
+	case "basic":
+		out["auth"] = map[string]any{"type": "basic", "username": pr.AuthUser, "password_set": pr.AuthSecret != ""}
+	case "bearer":
+		out["auth"] = map[string]any{"type": "bearer", "token_set": pr.AuthSecret != ""}
+	}
+	if hasDomain(pr.Target) {
+		out["domain_expiry"] = map[string]any{"domain": "", "enabled": pr.DomainExpiry, "state": "pending"}
+	}
+	return out
 }
 
 // count says how many requests the fake has answered for "METHOD /path".

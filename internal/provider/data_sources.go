@@ -269,7 +269,90 @@ func (d *channelDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		fmt.Sprintf("There is no live channel or heartbeat named %q.", want))
 }
 
+type probeDataSource struct{ clientHolder }
+
+func newProbeDataSource() datasource.DataSource { return &probeDataSource{} }
+
+type probeDataModel struct {
+	ID           types.String `tfsdk:"id"`
+	Name         types.String `tfsdk:"name"`
+	Kind         types.String `tfsdk:"kind"`
+	Target       types.String `tfsdk:"target"`
+	Method       types.String `tfsdk:"method"`
+	IntervalSecs types.Int64  `tfsdk:"interval_secs"`
+	Expect       types.String `tfsdk:"expect"`
+	Paused       types.Bool   `tfsdk:"paused"`
+	State        types.String `tfsdk:"state"`
+	ChannelID    types.String `tfsdk:"channel_id"`
+	PolicyID     types.String `tfsdk:"policy_id"`
+	Host         types.String `tfsdk:"host"`
+}
+
+func (d *probeDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_mast_probe"
+}
+
+func (d *probeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "A probe, by id or by name, for reading one someone made in the app.",
+		Attributes: map[string]schema.Attribute{
+			"id":            schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe id."},
+			"name":          schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "The probe name. It has to be unique to look it up this way."},
+			"kind":          schema.StringAttribute{Computed: true, MarkdownDescription: "`http`, `tcp`, `tls`, `dns`, `icmp` or `smtp`."},
+			"target":        schema.StringAttribute{Computed: true},
+			"method":        schema.StringAttribute{Computed: true},
+			"interval_secs": schema.Int64Attribute{Computed: true},
+			"expect":        schema.StringAttribute{Computed: true, MarkdownDescription: "`up`, or `down` for a target that should not answer."},
+			"paused":        schema.BoolAttribute{Computed: true},
+			"state":         schema.StringAttribute{Computed: true, MarkdownDescription: "What the checks found as of the read, such as `down`; `pending` before the first check, `paused` while the probe is paused."},
+			"channel_id":    schema.StringAttribute{Computed: true, MarkdownDescription: "The channel its pages go to, if it has one."},
+			"policy_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "The policy its pages follow, if it has one."},
+			"host":          schema.StringAttribute{Computed: true, MarkdownDescription: "The machine the target runs on, if the probe names one."},
+		},
+	}
+}
+
+func (d *probeDataSource) ConfigValidators(context.Context) []datasource.ConfigValidator {
+	return []datasource.ConfigValidator{
+		datasourcevalidator.ExactlyOneOf(path.MatchRoot("id"), path.MatchRoot("name")),
+	}
+}
+
+func (d *probeDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var cfg probeDataModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	var pr *apiProbe
+	var err error
+	if !cfg.ID.IsNull() {
+		pr, err = d.client.GetProbe(ctx, cfg.ID.ValueString())
+	} else {
+		pr, err = d.client.FindProbe(ctx, cfg.Name.ValueString())
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Finding the probe failed", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &probeDataModel{
+		ID:           types.StringValue(pr.ID),
+		Name:         types.StringValue(pr.Name),
+		Kind:         types.StringValue(pr.Kind),
+		Target:       types.StringValue(pr.Target),
+		Method:       types.StringValue(pr.Method),
+		IntervalSecs: types.Int64Value(pr.IntervalSecs),
+		Expect:       types.StringValue(pr.Expect),
+		Paused:       types.BoolValue(pr.Paused),
+		State:        types.StringValue(pr.State),
+		ChannelID:    text(pr.ChannelID),
+		PolicyID:     text(pr.PolicyID),
+		Host:         text(pr.Host),
+	})...)
+}
+
 var (
+	_ datasource.DataSourceWithConfigValidators = &probeDataSource{}
 	_ datasource.DataSourceWithConfigure        = &personDataSource{}
 	_ datasource.DataSourceWithConfigure        = &peopleDataSource{}
 	_ datasource.DataSourceWithConfigValidators = &rotationDataSource{}

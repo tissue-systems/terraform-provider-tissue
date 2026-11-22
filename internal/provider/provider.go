@@ -36,7 +36,7 @@ func (p *tissueProvider) Metadata(_ context.Context, _ provider.MetadataRequest,
 
 func (p *tissueProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages Tissue Mast channels, heartbeats, rotations and escalation policies.",
+		MarkdownDescription: "Manages Tissue Mast channels, heartbeats, probes, rotations and escalation policies.",
 		Attributes: map[string]schema.Attribute{
 			"token": schema.StringAttribute{
 				MarkdownDescription: "An API token (`tok_...`) with the `mast:read` and `mast:write` scopes. " +
@@ -95,6 +95,7 @@ func (p *tissueProvider) Resources(context.Context) []func() resource.Resource {
 		newRotationResource,
 		newOverrideResource,
 		newPolicyResource,
+		newProbeResource,
 	}
 }
 
@@ -104,5 +105,6 @@ func (p *tissueProvider) DataSources(context.Context) []func() datasource.DataSo
 		newPeopleDataSource,
 		newRotationDataSource,
 		newChannelDataSource,
+		newProbeDataSource,
 	}
 }
